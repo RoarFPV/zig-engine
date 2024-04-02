@@ -12,12 +12,20 @@ pub const Font = struct {
     glyphHeight: i32,
     texture: Texture,
 
+    // pub fn init() Font {
+    //     const ratio = @divTrunc(self.texture.iwidth, self.glyphWidth);
+    //     assert(ration )
+    //     return .{
+
+    //     };
+    // }
+
     pub fn characterY(self: Font, c: u8) i32 {
-        return c / @intCast(u8, @divTrunc(self.texture.iwidth, self.glyphWidth));
+        return c / @as(u8, @intCast(@divTrunc(self.texture.iwidth, self.glyphWidth)));
     }
 
     pub fn characterX(self: Font, c: u8) i32 {
-        return c % @intCast(u8, @divTrunc(self.texture.iwidth, self.glyphWidth));
+        return @max(0, @as(i32, @intCast((c % @as(u8, @intCast(@divTrunc(self.texture.iwidth, self.glyphWidth)))))) - 1);
     }
 
     pub fn characterColor(self: Font, cx: i32, cy: i32, offsetx: i32, offsety: i32) Vec4f {

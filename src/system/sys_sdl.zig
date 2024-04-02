@@ -12,7 +12,7 @@ const assert = @import("std").debug.assert;
 
 pub const trace = @import("../tracy.zig").trace;
 
-const SDL_WINDOWPOS_UNDEFINED = @bitCast(c_int, c.SDL_WINDOWPOS_UNDEFINED_MASK);
+const SDL_WINDOWPOS_UNDEFINED = @as(c_int, @bitCast(c.SDL_WINDOWPOS_UNDEFINED_MASK));
 
 const SDL_INIT_EVERYTHING =
     c.SDL_INIT_TIMER |
@@ -58,7 +58,7 @@ var config = Config{
 pub fn init(cfg: Config) !void {
     config = cfg;
 
-    if (c.SDL_Init(c.SDL_INIT_EVERYTHING) != 0) {
+    if (c.SDL_Init(c.SDL_INIT_TIMER | c.SDL_INIT_AUDIO | c.SDL_INIT_VIDEO | c.SDL_INIT_EVENTS) != 0) {
         c.SDL_Log("Unable to initialize SDL: %s", c.SDL_GetError());
         return error.SDLInitializationFailed;
     }
@@ -67,7 +67,7 @@ pub fn init(cfg: Config) !void {
     if (config.fullscreen)
         flags |= c.SDL_WINDOW_FULLSCREEN_DESKTOP;
 
-    window = c.SDL_CreateWindow("zig-engine", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, @intCast(c_int, config.windowWidth), @intCast(c_int, config.windowHeight), @intCast(u32, flags)) // c.SDL_WINDOW_FULLSCREEN_DESKTOP ) //c.SDL_WINDOW_RESIZABLE)
+    window = c.SDL_CreateWindow("zig-engine", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, @as(c_int, @intCast(config.windowWidth)), @as(c_int, @intCast(config.windowHeight)), @as(u32, @intCast(flags))) // c.SDL_WINDOW_FULLSCREEN_DESKTOP ) //c.SDL_WINDOW_RESIZABLE)
         orelse
         {
         c.SDL_Log("Unable to create window: %s", c.SDL_GetError());
@@ -80,11 +80,11 @@ pub fn init(cfg: Config) !void {
         return error.SDLInitializationFailed;
     };
 
-    renderTexture = c.SDL_CreateTexture(renderer, c.SDL_PIXELFORMAT_ABGR8888, c.SDL_TEXTUREACCESS_STATIC, @intCast(c_int, config.renderWidth), @intCast(c_int, config.renderHeight));
+    renderTexture = c.SDL_CreateTexture(renderer, c.SDL_PIXELFORMAT_ABGR8888, c.SDL_TEXTUREACCESS_STATIC, @as(c_int, @intCast(config.renderWidth)), @as(c_int, @intCast(config.renderHeight)));
 }
 
 pub fn showMouseCursor(show: u1) u1 {
-    return @intCast(u1, c.SDL_ShowCursor(@intCast(c_int, show)));
+    return @as(u1, @intCast(c.SDL_ShowCursor(@as(c_int, @intCast(show)))));
 }
 
 pub fn setRelativeMouseMode(enabled: u1) void {
@@ -101,8 +101,8 @@ pub inline fn targetFrameTimeMs() u32 {
 
 /// Set Render texture pointer
 pub fn updateRenderTexture(data: *u8, len: usize) void {
-    var pixelsPtr = @ptrCast(*anyopaque, data);
-    if (c.SDL_UpdateTexture(renderTexture, 0, pixelsPtr, @intCast(c_int, len)) != 0)
+    var pixelsPtr = @as(*anyopaque, @ptrCast(data));
+    if (c.SDL_UpdateTexture(renderTexture, 0, pixelsPtr, @as(c_int, @intCast(len))) != 0)
         c.SDL_Log("Unable to update texture: %s", c.SDL_GetError());
 }
 
@@ -123,19 +123,19 @@ pub fn beginUpdate() bool {
 
     _ = common.beginUpdate();
 
-    t0 = @intCast(u32, c.SDL_GetTicks());
+    t0 = @as(u32, @intCast(c.SDL_GetTicks()));
 
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event) != 0) {
-        switch (event.@"type") {
+        switch (event.type) {
             c.SDL_QUIT => {
                 return false;
             },
 
             c.SDL_KEYDOWN, c.SDL_KEYUP => {
-                const keyCode = @intToEnum(input.KeyCode, @intCast(u16, event.key.keysym.scancode));
+                const keyCode = @as(input.KeyCode, @enumFromInt(@as(u16, @intCast(event.key.keysym.scancode))));
 
-                input.setKeyState(keyCode, @intCast(u1, event.key.state));
+                input.setKeyState(keyCode, @as(u1, @intCast(event.key.state)));
             },
 
             c.SDL_MOUSEMOTION => {
@@ -170,10 +170,10 @@ pub fn renderPresent() void {
 pub fn endUpdate() u32 {
     common.endUpdate();
 
-    var t1 = @intCast(u32, c.SDL_GetTicks());
+    var t1 = @as(u32, @intCast(c.SDL_GetTicks()));
     const dtInt = t1 - t0;
-    // if (dtInt < config.targetDt())
-    //     c.SDL_Delay((config.targetDt()- dtInt) - 1);
+    if (dtInt < config.targetDt())
+        c.SDL_Delay((config.targetDt() - dtInt) - 1);
 
     t0 = t1;
 

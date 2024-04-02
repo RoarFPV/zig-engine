@@ -37,7 +37,7 @@ const TGA_HEADER = packed struct {
     Descriptor: u8,
 
     pub fn bufferSize(self: @This()) usize {
-        return self.pixelWidth() * @intCast(usize, self.Width) * @intCast(usize, self.Height);
+        return self.pixelWidth() * @as(usize, @intCast(self.Width)) * @as(usize, @intCast(self.Height));
     }
 
     pub fn pixelWidth(self: @This()) u8 {

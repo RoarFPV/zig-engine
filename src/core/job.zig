@@ -8,8 +8,8 @@ pub const Job = struct {
     pub const Error = error{JobError};
     pub const Result = enum { Complete, Retry, Abort };
 
-    pub const ExecuteFunc = fn (self: *Job) Error!Result;
-    pub const AbortFunc = fn (self: *Job) Error!void;
+    pub const ExecuteFunc = *const fn (self: *Job) Error!Result;
+    pub const AbortFunc = *const fn (self: *Job) Error!void;
 
     executeFn: ExecuteFunc,
     abortFn: AbortFunc,
@@ -52,8 +52,8 @@ pub fn InPlaceQueue(comptime T: type) type {
         // lock:std.Thread.RwLock,
 
         //lock:std.Mutex,
-        writeLock: std.Thread.Mutex.AtomicMutex,
-        readLock: std.Thread.Mutex.AtomicMutex,
+        writeLock: std.Thread.Mutex,
+        readLock: std.Thread.Mutex,
         wait: std.Thread.Semaphore,
 
         size: usize,
@@ -62,13 +62,33 @@ pub fn InPlaceQueue(comptime T: type) type {
             var s = Self{
                 .head = null,
                 .tail = null,
-                .writeLock = std.Thread.Mutex.AtomicMutex{},
-                .readLock = std.Thread.Mutex.AtomicMutex{},
+                .writeLock = std.Thread.Mutex{},
+                .readLock = std.Thread.Mutex{},
                 .wait = undefined,
                 .size = 0,
             };
 
             return s;
+        }
+
+        pub fn tryPush(self: *Self, node: ?*T) bool {
+            const ta = trace(@src());
+            defer ta.end();
+
+            if (!self.tryLockForWrite())
+                return false;
+
+            self.pushNoLock(node);
+            self.unlockForWrite();
+            return true;
+        }
+
+        pub fn tryLockForWrite(self: *Self) bool {
+            if (!self.writeLock.tryLock())
+                return false;
+
+            self.readLock.lock();
+            return true;
         }
 
         pub fn lockForWrite(self: *Self) void {
@@ -96,13 +116,6 @@ pub fn InPlaceQueue(comptime T: type) type {
 
             if (self.head == null) {
                 self.head = self.tail;
-                self.wait.post();
-                self.wait.post();
-                self.wait.post();
-                self.wait.post();
-                self.wait.post();
-                self.wait.post();
-                self.wait.post();
                 self.wait.post();
             }
 
@@ -154,9 +167,10 @@ pub fn InPlaceQueue(comptime T: type) type {
                 var job = self.pop();
                 attempts += 1;
 
-                if (job != null)
+                if (job != null) {
+                    job.?.next = null;
                     return job;
-
+                }
                 // only wait if the queue is empty
                 if (self.head == null and attempts > 63) {
                     // const tf = trace(@src());
@@ -184,17 +198,23 @@ pub const Queue = InPlaceQueue(Job);
 
 //
 pub const Worker = struct {
-    runner: *Runner,
+    pool: *WorkerPool,
     thread: std.Thread,
     id: u8,
     active: bool,
+    pending: Queue,
+    complete: Queue,
+    executing: bool,
 
-    pub fn init(ident: u8, runner: *Runner) !Worker {
+    pub fn init(ident: u8, pool: *WorkerPool) !Worker {
         var worker = Worker{
             .id = ident,
-            .runner = runner,
             .thread = undefined,
             .active = false,
+            .pool = pool,
+            .pending = Queue.init(),
+            .complete = Queue.init(),
+            .executing = false,
         };
 
         return worker;
@@ -207,19 +227,25 @@ pub const Worker = struct {
     pub fn run(self: *Worker) void {
         self.active = true;
         while (self.active) {
-            var job = self.runner.pending.popWait();
+            var job = self.pending.popWait();
 
-            self.runner.addRunningJob(job);
+            //self.runner.addRunningJob(job);
+
+            @atomicStore(@TypeOf(self.executing), &self.executing, true, .SeqCst);
 
             const result = job.?.execute() catch continue;
 
-            self.runner.removeRunningJob(job);
+            //self.complete.pushNoLock(job);
+
+            @atomicStore(@TypeOf(self.executing), &self.executing, false, .SeqCst);
+
+            //self.runner.removeRunningJob(job);
             _ = result;
 
             // switch (result) {
-            //     .Complete, .Abort => {},
-            //     .Retry => self.runner.pending.push(job.?),
-            // }
+            //      .Complete, .Abort => self.complete.pushNoLock(job),
+            //      //.Retry => self.runner.pending.push(job.?),
+            //  }
         }
     }
 
@@ -231,21 +257,33 @@ pub const Worker = struct {
 // Group of workers pulling from the same queue
 pub const WorkerPool = struct {
     workers: std.ArrayList(Worker),
-    queue: *Runner,
+    nextId: usize,
 
-    pub fn init(queue: *Runner, allocator: *std.mem.Allocator, workerCount: u8) !WorkerPool {
+    pub const Counts = struct {
+        pub fn init() Counts {
+            return .{ .pending = 0, .running = 0, .complete = 0 };
+        }
+
+        pending: usize,
+        running: usize,
+        complete: usize,
+    };
+
+    pub fn init(allocator: *std.mem.Allocator, workerCount: u8) !WorkerPool {
         var workers = try std.ArrayList(Worker).initCapacity(allocator.*, workerCount);
+
+        var self = WorkerPool{
+            .workers = workers,
+            .nextId = 0,
+        };
 
         var w = workerCount;
         while (w > 0) {
             defer w -= 1;
-            try workers.append(try Worker.init(w, queue));
+            try self.workers.append(try Worker.init(w, &self));
         }
 
-        return WorkerPool{
-            .workers = workers,
-            .queue = queue,
-        };
+        return self;
     }
 
     /// Begin all jobs executing off of the queue
@@ -265,115 +303,119 @@ pub const WorkerPool = struct {
         self.stop();
         self.workers.deinit();
     }
+
+    pub fn counts(self: *WorkerPool) Counts {
+        var ret = Counts.init();
+        for (self.workers.items) |*w| {
+            //ret.complete += w.complete.count();
+            ret.running += @intFromBool(w.executing);
+            ret.pending += w.pending.count();
+        }
+
+        return ret;
+    }
+
+    pub fn push(self: *WorkerPool, job: *Job) void {
+        // round robin queue
+        self.nextId = (self.nextId + 1) % self.workers.items.len;
+
+        while (!self.workers.items[self.nextId].pending.tryPush(job)) {
+            self.nextId = (self.nextId + 1) % self.workers.items.len;
+        }
+    }
 };
 
-pub fn Batch(comptime TDataType: type) type {
-    return struct {
-        const Self = @This();
+// pub fn Batch(comptime TDataType: type) type {
+//     return struct {
+//         const Self = @This();
 
-        pub const Error = error{BatchError};
-        pub const Result = enum { Complete, Retry, Abort };
-        pub const ExecuteFunc = fn (index:usize, total:usize, self: *TDataType) Error!Result;
+//         pub const Error = error{BatchError};
+//         pub const Result = enum { Complete, Retry, Abort };
+//         pub const ExecuteFunc =*const fn (index:usize, total:usize, self: *TDataType) Error!Result;
 
-        jobs: std.ArrayList(TDataType),
+//         work: std.ArrayList(TDataType),
 
-        executeFn: ExecuteFunc,
+//         executeFn: ExecuteFunc,
 
-        iterator: usize,
-        complete: usize,
+//         iterator: usize,
+//         complete: usize,
 
-        pub fn init(executeFn: ExecuteFunc, allocator: std.mem.Allocator, capacity: usize) !Self {
-            var list = try std.ArrayList(TJobType).initCapacity(allocator, size);
+//         pub fn init(executeFn: ExecuteFunc, allocator: std.mem.Allocator, capacity: usize) !Self {
+//             var list = try std.ArrayList(TJobType).initCapacity(allocator, size);
 
-            var self = Self{
-                .jobs = list,
-                .iterator = 0,
-                .complete = 0,
-                .executeFn = executeFn,
-            };
+//             var self = Self{
+//                 .work = list,
+//                 .iterator = 0,
+//                 .complete = 0,
+//                 .executeFn = executeFn,
+//             };
 
-            return self;
-        }
+//             return self;
+//         }
 
-        pub fn reset(self: *Self) void {
-            // TODO: make and return error?
-            assert(!self.hasWork() and self.isComplete());
+//         pub fn reset(self: *Self) void {
+//             // TODO: make and return error?
+//             assert(!self.hasWork() and self.isComplete());
 
-            _ = @atomicStore(@TypeOf(self.iterator), &self.iterator, 0, .SeqCst);
-            _ = @atomicStore(@TypeOf(self.complete), &self.complete, 0, .SeqCst);
-        }
+//             _ = @atomicStore(@TypeOf(self.iterator), &self.iterator, 0, .SeqCst);
+//             _ = @atomicStore(@TypeOf(self.complete), &self.complete, 0, .SeqCst);
+//         }
 
-        pub fn get(self: *Self, index: usize) ?*TJobType {
-            return &self.jobs.items[index] orelse null;
-        }
+//         pub fn get(self: *Self, index: usize) ?*TJobType {
+//             return &self.work.items[index] orelse null;
+//         }
 
-        pub fn size(self: Self) usize {
-            return self.jobs.items.len;
-        }
+//         pub fn size(self: Self) usize {
+//             return self.work.items.len;
+//         }
 
-        pub fn resize(self: Self) !void {
-            try self.jobs.resize(size);
-        }
+//         pub fn resize(self: Self) !void {
+//             try self.work.resize(size);
+//         }
 
-        pub fn workerRunOne(self: *Self) !void {
-            const index = @atomicRmw(usize, &self.iterator, .Add, 1, .SeqCst);
-            var work = self.get(index);
-            if (work == null)
-                return;
+//         pub fn workerRunOne(self: *Self) !void {
+//             const index = @atomicRmw(usize, &self.iterator, .Add, 1, .SeqCst);
+//             var work = self.get(index);
+//             if (work == null)
+//                 return;
 
-            _ = try self.executeFn(index, self.jobs.items.len, work);
+//             _ = try self.executeFn(index, self.work.items.len, work);
 
-            _ = @atomicRmw(usize, &self.complete, .Add, 1, .SeqCst);
-        }
+//             _ = @atomicRmw(usize, &self.complete, .Add, 1, .SeqCst);
+//         }
 
-        pub fn isComplete(self: Self) bool {
-            return @atomicLoad(@TypeOf(self.complete), &self.complete, .SeqCst) >= self.size();
-        }
+//         pub fn isComplete(self: Self) bool {
+//             return @atomicLoad(@TypeOf(self.complete), &self.complete, .SeqCst) >= self.size();
+//         }
 
-        pub fn hasWork(self:Self) bool {
-            return @atomicLoad(@TypeOf(self.complete), &self.complete, .SeqCst) < self.size();
-        }
-    };
-}
+//         pub fn hasWork(self:Self) bool {
+//             return @atomicLoad(@TypeOf(self.complete), &self.complete, .SeqCst) < self.size();
+//         }
+//     };
+// }
 
 pub const Runner = struct {
     const Self = @This();
-    const BatchQueue = InPlaceQueue(Batch(anytype));
 
-    pending: BatchQueue,
-    // running: usize,
+    pending: Queue,
+    running: usize,
 
     pub fn init() Self {
-        return Self{ .pending = BatchQueue.init()};
+        return Self{ .pending = Queue.init(), .running = 0 };
     }
 
-    // pub fn addRunningJob(self: *Self, job: ?*Job) void {
-    //     _ = job;
-    //     _ = @atomicRmw(@TypeOf(self.running), &self.running, .Add, 1, .SeqCst);
-    // }
+    pub fn addRunningJob(self: *Self, job: ?*Job) void {
+        _ = job;
+        _ = @atomicRmw(@TypeOf(self.running), &self.running, .Add, 1, .SeqCst);
+    }
 
-    // pub fn removeRunningJob(self: *Self, job: ?*Job) void {
-    //     _ = job;
-    //     _ = @atomicRmw(@TypeOf(self.running), &self.running, .Sub, 1, .SeqCst);
-    // }
+    pub fn removeRunningJob(self: *Self, job: ?*Job) void {
+        _ = job;
+        _ = @atomicRmw(@TypeOf(self.running), &self.running, .Sub, 1, .SeqCst);
+    }
 
-    // pub fn count(self: *Self) usize {
-    //     return @atomicLoad(@TypeOf(self.running), &self.running, .SeqCst) + self.pending.count();
-    // }
-
-    // Run by worker thread
-    pub fn workerExecute(self:*Self) void {
-        var node = self.pending.head;
-        while(node != null){
-            if(node.?.hasWork())
-            {
-                node.?.workerRunOne();
-                return;
-            }
-
-            node = node.?.next;
-
-        }
+    pub fn count(self: *Self) usize {
+        return @atomicLoad(@TypeOf(self.running), &self.running, .SeqCst) + self.pending.count();
     }
 };
 

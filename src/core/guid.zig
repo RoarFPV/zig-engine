@@ -44,7 +44,7 @@ const GUIDBuilder = struct {
 
     inline fn parseUnbraced(comptime format: Format, string: []const u8) !GUID {
         var builder = GUIDBuilder.init();
-        for (string) |c, i| {
+        for (string, 0..) |c, i| {
             switch (c) {
                 'A'...'F' => builder.pushNibble(c - 'A' + 10),
                 'a'...'f' => builder.pushNibble(c - 'a' + 10),
@@ -133,7 +133,7 @@ pub const GUID = packed struct {
 
     /// Does this GUID equal the other GUID?
     pub inline fn eq(self: *const Self, other: *const Self) bool {
-        return mem.eql(u8, @ptrCast(*const [16]u8, self), @ptrCast(*const [16]u8, other));
+        return mem.eql(u8, @as(*const [16]u8, @ptrCast(self)), @as(*const [16]u8, @ptrCast(other)));
     }
 
     /// Initialize a null GUID (all zeroes).
@@ -149,12 +149,12 @@ pub const GUID = packed struct {
 
     /// Initialize a GUID from a byte array.
     pub fn fromBytes(bytes: [16]u8) Self {
-        return @bitCast(Self, bytes);
+        return @as(Self, @bitCast(bytes));
     }
 
     /// Get the GUID data as a byte array.
     pub fn asBytes(self: *const Self) *const [16]u8 {
-        return @ptrCast(*const [16]u8, self);
+        return @as(*const [16]u8, @ptrCast(self));
     }
 
     /// Parse a GUID string at runtime.

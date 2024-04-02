@@ -5,8 +5,8 @@ const assert = std.debug.assert;
 /// t is 0.0-1.0 and returns from <= result <= to
 /// TODO: comptime assert if T is not floating point?
 /// TODO: allow integer from/to type and floating point t type
-pub fn lerp(comptime T: type, from: T, to: T, t: T) T {
-    return (1 - t) * from + t * to;
+pub fn lerp(comptime T: type, comptime one: T, from: T, to: T, t: T) T {
+    return (one - t) * from + t * to;
 }
 
 /// from <= v <= to and returns 0.0-1.0

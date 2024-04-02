@@ -404,20 +404,20 @@ pub const KeyCode = enum(u16) {
     //            for array bounds */
 };
 
-var keys = [_]u1{0} ** @enumToInt(KeyCode.NUM_KEYCODES);
+var keys = [_]u1{0} ** @intFromEnum(KeyCode.NUM_KEYCODES);
 
 pub inline fn isKeyDown(key: KeyCode) bool {
     return keyState(key) > 0;
 }
 
 pub inline fn keyState(key: KeyCode) u1 {
-    return keys[@enumToInt(key)];
+    return keys[@intFromEnum(key)];
 }
 
 pub inline fn keyStateFloat(key: KeyCode) f32 {
-    return @intToFloat(f32, keys[@enumToInt(key)]);
+    return @as(f32, @floatFromInt(keys[@intFromEnum(key)]));
 }
 
 pub fn setKeyState(key: KeyCode, state: u1) void {
-    keys[@enumToInt(key)] = state;
+    keys[@intFromEnum(key)] = state;
 }

@@ -3,6 +3,7 @@ const math = std.math;
 const assert = std.debug.assert;
 const Thread = std.Thread;
 const Timer = std.time.Timer;
+const Instant = std.time.Instant;
 const File = std.fs.File;
 const json = std.json;
 
@@ -47,13 +48,14 @@ pub const Profile = struct {
         sample.depth = @atomicRmw(u8, &self.depth, .Add, 1, .SeqCst);
         sample.tag = tag;
         //TODO: find out how to correctly handle a timer error here
-        var timer = Timer.start() catch return id;
-        sample.begin = timer.start_time;
+
+        const now = Instant.now() catch return id;
+        sample.begin = now.timestamp;
         return id;
     }
 
     pub fn sampleTime(self: *Profile, id: u32) i64 {
-        return @intCast(i64, self.samples.items[id].end - self.samples.items[id].begin);
+        return @as(i64, @intCast(self.samples.items[id].end - self.samples.items[id].begin));
     }
 
     // Stop tracking wall clock timing
@@ -61,8 +63,8 @@ pub const Profile = struct {
         // const d = @atomicRmw(u8, &self.depth, .Sub, 1, .SeqCst);
 
         //TODO: find out how to correctly handle a timer error here
-        var timer = Timer.start() catch return;
-        self.samples.items[id].end = timer.start_time;
+        const now = Instant.now() catch return;
+        self.samples.items[id].end = now.timestamp;
     }
 
     /// Reset profile data for a new frame
@@ -73,8 +75,8 @@ pub const Profile = struct {
         self.samples.resize(1) catch return;
 
         //TODO: find out how to correctly handle a timer error here
-        var timer = Timer.start() catch return;
-        self.frameStartTime = timer.start_time;
+        const now = Instant.now() catch return;
+        self.frameStartTime = now.timestamp;
     }
 
     pub fn hasSamples(self: Profile) bool {
@@ -85,7 +87,7 @@ pub const Profile = struct {
         var stream = file.outStream();
         try stream.print("f:{}, sc:{}\n", .{ self.frameCount, self.nextSample });
 
-        for (self.samples.items) |sample, i| {
+        for (self.samples.items, 0..) |sample, i| {
             if (i > self.nextSample)
                 break;
 
@@ -108,7 +110,7 @@ pub const Profile = struct {
         var stream = file.writer();
         try stream.print("{{ \"traceEvents\":[", .{});
 
-        for (self.samples.items) |sample, i| {
+        for (self.samples.items, 0..) |sample, i| {
             if (i > self.nextSample)
                 break;
 
@@ -146,7 +148,7 @@ pub const Profile = struct {
         var stream = file.outStream();
         try stream.print("Frame, Frame Start, Id, Depth, Begin ns, End ns, Exec ns, tag\n", .{});
 
-        for (self.samples.items) |sample, i| {
+        for (self.samples.items, 0..) |sample, i| {
             if (i == 0 or sample.begin == 0)
                 continue;
 

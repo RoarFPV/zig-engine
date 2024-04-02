@@ -7,23 +7,36 @@ const Timer = std.time.Timer;
 
 // engine imports
 pub const sys = @import("system/sys_sdl.zig");
-pub const render = @import("render/raster_cpu.zig");
+//pub const render = @import("render/raster_cpu_jobs.zig");
+//pub const render = @import("render/raytracer_cpu.zig");
+pub const render = @import("render/raster_cpu_spans.zig");
 pub const input = @import("system/sys_input.zig");
 pub const game = @import("game/game_cubes.zig");
+//pub const game = @import("game/game_voxel.zig");
+// pub const game = @import("game/game_particle.zig");
+//pub const game = @import("game/game_oblivious.zig");
 
 pub const Mat44f = @import("core/matrix.zig").Mat44f;
 pub const Vec4f = @import("core/vector.zig").Vec4f;
 pub const Profile = @import("core/profiler.zig").Profile;
 pub const Sampler = @import("core/profiler.zig").Sampler;
+pub const Color = @import("core/color.zig").Color;
 pub const blend = @import("core/interp.zig");
 
 pub const Mesh = @import("render/mesh.zig").Mesh;
 
-pub const tracy = @import("tracy.zig");
+pub const tracy = @import("tracy.zig").tracy;
 pub const trace = tracy.trace;
+
+const tools = @import("tools.zig");
 
 pub var stdout = std.io.getStdOut();
 var bufferAllocator = std.heap.page_allocator;
+var textureAllocator = std.heap.page_allocator;
+pub var font: render.Font = undefined;
+
+var render3d: bool = true;
+var renderSingleFrame: bool = false;
 
 // pub const systemConfig = sys.Config{
 //     .windowWidth = 1024,
@@ -35,39 +48,52 @@ var bufferAllocator = std.heap.page_allocator;
 // };
 
 // pub const systemConfig = sys.Config{
-//   .windowWidth = 1920,
-//   .windowHeight = 1080,
-//   .renderWidth = 1920,
-//   .renderHeight = 1080,
-//   .maxFps = 60,
-//   .fullscreen = true,
+//     .windowWidth = 1920,
+//     .windowHeight = 1080,
+//     .renderWidth = 1920,
+//     .renderHeight = 1080,
+//     .maxFps = 60,
+//     .fullscreen = false,
 // };
 
 pub const systemConfig = sys.Config{
-  .windowWidth = 1260,
-  .windowHeight = 768,
-  .renderWidth = 426,
-  .renderHeight = 240,
-//   .renderWidth = 853,
-//   .renderHeight = 480,
-  .maxFps = 60,
-  .fullscreen = false,
+    .windowWidth = 1024,
+    .windowHeight = 768,
+    // .renderWidth = 328,
+    // .renderHeight = 200,
+    .renderWidth = 640,
+    .renderHeight = 480,
+    .maxFps = 60,
+    .fullscreen = false,
 };
 
-
 // pub const systemConfig = sys.Config{
-//   .windowWidth = 1920,
-//   .windowHeight = 1080,
-//   .renderWidth = 1024,
-//   .renderHeight = 768,
-//   .maxFps = 60,
-//   .fullscreen = false,
+//     .windowWidth = 1260,
+//     .windowHeight = 768,
+//     .renderWidth = 1260,
+//     .renderHeight = 768,
+//     .maxFps = 60,
+//     .fullscreen = false,
 // };
-
 
 var profileId: u1 = 0;
 
 var profiles: [2]Profile = undefined;
+
+fn createAsciiTable(comptime s: usize, comptime n: usize) [n]u8 {
+    assert(s < 255);
+    assert(n < 255);
+
+    var result: [n]u8 = undefined;
+    for (s..n) |i| {
+        const c = @as(u8, i);
+        result[i - s] = c;
+        //@compileLog("ascii[{d}]={d}", i-s, c);
+    }
+    return result;
+}
+
+const asciiTable = createAsciiTable(16 * 2, 32);
 
 pub fn swapProfile() *Profile {
     profileId = ~profileId;
@@ -97,10 +123,20 @@ pub fn main() !void {
     try render.init(systemConfig.renderWidth, systemConfig.renderHeight, &bufferAllocator, profiler);
     defer render.shutdown();
 
+    var fontTex = try tools.TgaTexLoader.importTGAFile(&textureAllocator, "../../assets/mbf_small_7x7.tga");
+
+    font = render.Font{
+        .glyphWidth = 7,
+        .glyphHeight = 7,
+        .texture = fontTex,
+    };
+
+    //defer textureAllocator.reset();
+
     const bufferLineSize = render.bufferLineSize();
 
     var quit = false;
-    const targetFrameTimeNs = @intToFloat(f32, sys.targetFrameTimeMs() * 1_000_000);
+    const targetFrameTimeNs = @as(f32, @floatFromInt(sys.targetFrameTimeMs() * 1_000_000));
 
     _ = try game.init();
 
@@ -109,11 +145,13 @@ pub fn main() !void {
     // var gameSampler:Sampler = undefined;
     // var renderSampler:Sampler = undefined;
 
+    //std.debug.print("{s}\n", .{&asciiTable});
+
     while (!quit) {
-        tracy.frameMark();
         const mainTrace = trace(@src());
         defer mainTrace.end();
         {
+            tracy.frameMark();
             var el = Sampler.initAndBegin(profiler, "engine.main");
             defer el.end();
 
@@ -143,6 +181,7 @@ pub fn main() !void {
                 defer srt.end();
 
                 if (lastProfile.hasSamples()) {
+                    render.drawString(&font, "0123456789\n", 10, 50, Vec4f.one());
                     displayProfileUi(lastProfile, 2, 2, 3, systemConfig.renderWidth - 5, 8, targetFrameTimeNs);
                     //render.drawProgress(2, 2, 100, @intToFloat(f32, lastProfile.sampleTime(1)), targetFrameTimeNs );
                     //render.drawProgress(2, 5, 100, @intToFloat(f32, lastProfile.sampleTime(2)), targetFrameTimeNs );
@@ -165,14 +204,13 @@ pub fn main() !void {
             }
         }
 
-        if( !input.isKeyDown(input.KeyCode.SPACE))
-        {
-          lastProfile = profiler;
-          profiler = swapProfile();
-          
-        //   render.frameStats().print();
+        if (!input.isKeyDown(input.KeyCode.SPACE)) {
+            lastProfile = profiler;
+            profiler = swapProfile();
+
+            //   render.frameStats().print();
             // try profiler.jsonPrint(stdout);
-          profiler.nextFrame();
+            profiler.nextFrame();
         }
     }
 
@@ -184,16 +222,16 @@ pub fn main() !void {
 pub fn displayProfileUi(self: *Profile, x: i32, y: i32, lineSize: i32, maxWidth: f32, maxDepth: u8, targetNs: f32) void {
     const mainSample = self.samples.items[1];
     // const totalBegin = @intToFloat(f32, mainSample.begin - self.frameStartTime);
-    const totalEnd = @intToFloat(f32, mainSample.end - self.frameStartTime);
+    const totalEnd = @as(f32, @floatFromInt(mainSample.end - self.frameStartTime));
     const totalTime = targetNs * 2; //@intToFloat(f32, mainSample.end-mainSample.begin);
 
-    const targetx = x + @floatToInt(i32, (targetNs / totalTime) * maxWidth);
-    render.drawLine(targetx, y - 2, targetx, y + lineSize * @intCast(i32, maxDepth), render.Color.fromNormal(0.5, 0.0, 0.2, 0.7));
+    const targetx = x + @as(i32, @intFromFloat((targetNs / totalTime) * maxWidth));
+    render.drawLine(targetx, y - 2, targetx, y + lineSize * @as(i32, @intCast(maxDepth)), Color.fromNormal(0.5, 0.0, 0.2, 0.7));
 
-    const targetmidx = x + @floatToInt(i32, ((targetNs / 2) / totalTime) * maxWidth);
-    render.drawLine(targetmidx, y - 2, targetmidx, y + lineSize * @intCast(i32, maxDepth), render.Color.fromNormal(0.3, 0.3, 0.3, 0.7));
+    const targetmidx = x + @as(i32, @intFromFloat(((targetNs / 2) / totalTime) * maxWidth));
+    render.drawLine(targetmidx, y - 2, targetmidx, y + lineSize * @as(i32, @intCast(maxDepth)), Color.fromNormal(0.3, 0.3, 0.3, 0.7));
 
-    for (self.samples.items) |sample, i| {
+    for (self.samples.items, 0..) |sample, i| {
         if (i > self.nextSample)
             break;
 
@@ -203,19 +241,19 @@ pub fn displayProfileUi(self: *Profile, x: i32, y: i32, lineSize: i32, maxWidth:
         if (i == 0 or sample.begin == 0 or sample.begin < self.frameStartTime)
             continue;
 
-        const begin = @intToFloat(f32, sample.begin - self.frameStartTime);
-        const end = @intToFloat(f32, sample.end - self.frameStartTime);
+        const begin = @as(f32, @floatFromInt(sample.begin - self.frameStartTime));
+        const end = @as(f32, @floatFromInt(sample.end - self.frameStartTime));
         // const duration = end-begin;
 
         const cs = std.math.clamp(blend.invLerp(f32, 0, targetNs, totalEnd), 0.0, 1.0);
 
-        const startx = x + @floatToInt(i32, std.math.clamp(begin / totalTime, 0.0, 4.0) * maxWidth);
-        const finishx = x + @floatToInt(i32, std.math.clamp(end / totalTime, 0.0, 4.0) * maxWidth);
-        const ystart = y + lineSize * @intCast(i32, sample.depth);
+        const startx = x + @as(i32, @intFromFloat(std.math.clamp(begin / totalTime, 0.0, 4.0) * maxWidth));
+        const finishx = x + @as(i32, @intFromFloat(std.math.clamp(end / totalTime, 0.0, 4.0) * maxWidth));
+        const ystart = y + lineSize * @as(i32, @intCast(sample.depth));
 
         //std.debug.warn("{} x: {}, fx:{}, y:{}, b:{}, e:{}, d:{}, t:{}\n", .{sample.depth, startx, finishx, ystart, begin, end, duration, sample.tag});
 
-        render.drawLine(startx, ystart, finishx, ystart, render.Color.fromNormal(cs * cs, (1 - (cs * cs)), 0.2, 1));
+        render.drawLine(startx, ystart, finishx, ystart, Color.fromNormal(cs * cs, (1 - (cs * cs)), 0.2, 1));
     }
 }
 

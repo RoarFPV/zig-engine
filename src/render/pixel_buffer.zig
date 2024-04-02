@@ -10,7 +10,6 @@ const Profile = @import("../core/profiler.zig").Profile;
 
 pub const trace = @import("../tracy.zig").trace;
 
-
 const Allocator = std.mem.Allocator;
 
 pub fn PixelBuffer(comptime PixelType: type) type {
@@ -19,11 +18,13 @@ pub fn PixelBuffer(comptime PixelType: type) type {
         buffer: std.ArrayList(PixelType),
         w: i32,
         h: i32,
+        clearValue: PixelType,
 
-        pub fn init(nW: i32, nH: i32, allocator: *Allocator) !SelfType {
+        pub fn init(nW: i32, nH: i32, clearValue: PixelType, allocator: *Allocator) !SelfType {
             var self = SelfType{
                 .w = nW,
                 .h = nH,
+                .clearValue = clearValue,
                 .buffer = std.ArrayList(PixelType).init(allocator.*),
             };
 
@@ -37,22 +38,35 @@ pub fn PixelBuffer(comptime PixelType: type) type {
         }
 
         pub fn clear(self: *SelfType, p: PixelType) void {
-            // const tracy = trace(@src());
-            // defer tracy.end();
-    
-            std.mem.set(PixelType, self.*.buffer.items[0..], p);
+            const tracy = trace(@src());
+            defer tracy.end();
+            //std.mem.set(PixelType, self.*.buffer.items, p);
+
+            for (self.buffer.items) |*pixel| {
+                pixel.* = p;
+            }
         }
 
-        pub inline fn pxIndex(self: *SelfType, x: i32, y: i32) usize {
-            return @intCast(usize, x + self.*.w * y);
+        pub fn clearDefault(self: *SelfType) void {
+            const tracy = trace(@src());
+            defer tracy.end();
+            @memset(self.*.buffer.items, self.clearValue);
+
+            // for (self.buffer.items) |*pixel| {
+            //     pixel.* = self.clearValue;
+            // }
+        }
+
+        pub inline fn pxIndex(self: SelfType, x: i32, y: i32) usize {
+            return @as(usize, @intCast(x + self.w * y));
         }
 
         pub inline fn write(self: *SelfType, x: i32, y: i32, value: PixelType) void {
             const offset = x + self.*.w * y;
-            if( offset < 0 or offset >= self.buffer.items.len)
+            if (offset < 0 or offset >= self.buffer.items.len)
                 return;
-                
-            self.*.buffer.items[@intCast(usize, x + self.*.w * y)] = value;
+
+            self.*.buffer.items[@as(usize, @intCast(x + self.*.w * y))] = value;
         }
 
         pub inline fn writeIndex(self: *SelfType, index: usize, value: PixelType) void {
@@ -60,30 +74,51 @@ pub fn PixelBuffer(comptime PixelType: type) type {
         }
 
         pub inline fn read(self: *SelfType, x: i32, y: i32) PixelType {
-            return self.*.buffer.items[@intCast(usize, x + self.*.w * y)];
+            return self.*.buffer.items[@as(usize, @intCast(x + self.*.w * y))];
         }
 
         pub inline fn readIndex(self: *SelfType, index: usize) PixelType {
             return self.*.buffer.items[index];
         }
 
-        pub inline fn setLessThan(self: *SelfType, x: i32, y: i32, value: PixelType) u1 {
-            const index = @intCast(usize, x + self.*.w * y);
+        pub fn setLessThan(self: *SelfType, x: i32, y: i32, value: PixelType) bool {
+            const rawIndex = x + self.*.w * y;
+            if (rawIndex < 0 or rawIndex >= self.*.buffer.items.len)
+                return false;
 
-            //TODO: attempt atomic for thread safety
-            if (value < self.*.buffer.items[index]) {
+            const index = @as(usize, @intCast(rawIndex));
+            const depth = self.*.buffer.items[index];
+            //TODO: use cmp exchange?
+            if (std.math.isInf(depth) or value < depth) {
                 self.*.buffer.items[index] = value;
-                return 1;
+                return true;
             }
 
-            return 0;
+            return false;
+            //return if( @atomicRmw(PixelType, &self.*.buffer.items[index], .Min, value, .SeqCst ) == self.*.buffer[index] ) 0 else 1;
+        }
+
+        pub fn setGreaterThan(self: *SelfType, x: i32, y: i32, value: PixelType) bool {
+            const rawIndex = x + self.*.w * y;
+            if (rawIndex < 0 or rawIndex >= self.*.buffer.items.len)
+                return false;
+
+            const index = @as(usize, @intCast(rawIndex));
+            const depth = self.*.buffer.items[index];
+            //TODO: use cmp exchange?
+            if (std.math.isInf(depth) or value > depth) {
+                self.*.buffer.items[index] = value;
+                return true;
+            }
+
+            return false;
             //return if( @atomicRmw(PixelType, &self.*.buffer.items[index], .Min, value, .SeqCst ) == self.*.buffer[index] ) 0 else 1;
         }
 
         pub fn resize(self: *SelfType, nW: i32, nH: i32) !void {
             self.*.w = nW;
             self.*.h = nH;
-            try self.*.buffer.resize(@intCast(usize, nH * nW * @sizeOf(PixelType)));
+            try self.*.buffer.resize(@as(usize, @intCast(nH * nW * @sizeOf(PixelType))));
         }
 
         pub inline fn bufferStart(self: *SelfType) *PixelType {
@@ -91,7 +126,7 @@ pub fn PixelBuffer(comptime PixelType: type) type {
         }
 
         pub inline fn bufferLineSize(self: *SelfType) usize {
-            return @intCast(usize, self.w) * @sizeOf(PixelType);
+            return @as(usize, @intCast(self.w)) * @sizeOf(PixelType);
         }
     };
 }
@@ -123,10 +158,15 @@ pub fn scale(a: Vec2, b: f32) Vec2 {
 pub fn PixelRenderer(comptime PixelType: type) type {
     return struct {
         const SelfType = @This();
-        buffer: *PixelBuffer(PixelType),
+        const BufferType = PixelBuffer(PixelType);
+        buffer: *BufferType,
 
-        pub fn init(buf: *PixelBuffer(PixelType)) SelfType {
+        pub fn init(buf: *BufferType) SelfType {
             return SelfType{ .buffer = buf };
+        }
+
+        pub fn setBuffer(self: *SelfType, buffer: *BufferType) void {
+            self.buffer = buffer;
         }
 
         pub fn drawThickLine(self: *SelfType, xFrom: c_int, yFrom: c_int, xTo: c_int, yTo: c_int, value: PixelType, thickness: f32) void {
@@ -154,26 +194,26 @@ pub fn PixelRenderer(comptime PixelType: type) type {
                 return;
             }
 
-            const intThickness = @floatToInt(c_int, @ceil(thickness));
+            const intThickness = @as(c_int, @intFromFloat(@ceil(thickness)));
             const X0 = x0 - intThickness;
             const Y0 = y0 - intThickness;
             const X1 = x1 + intThickness;
             const Y1 = y1 + intThickness;
 
             const v01 = Vec2{
-                .x = @intToFloat(f32, xTo - xFrom),
-                .y = @intToFloat(f32, yTo - yFrom),
+                .x = @as(f32, @floatFromInt(xTo - xFrom)),
+                .y = @as(f32, @floatFromInt(yTo - yFrom)),
             };
 
             var iy: c_int = Y0;
             while (iy <= Y1) {
-                const y: f32 = @intToFloat(f32, iy);
+                const y: f32 = @as(f32, @floatFromInt(iy));
                 var ix: c_int = X0;
                 while (ix <= X1) {
-                    const x: f32 = @intToFloat(f32, ix);
+                    const x: f32 = @as(f32, @floatFromInt(ix));
                     const v = Vec2{
-                        .x = x - @intToFloat(f32, xFrom),
-                        .y = y - @intToFloat(f32, yFrom),
+                        .x = x - @as(f32, @floatFromInt(xFrom)),
+                        .y = y - @as(f32, @floatFromInt(yFrom)),
                     };
                     const h1 = dot(v, v);
                     const c1 = dot(norm(v01), v) * dot(norm(v01), v);

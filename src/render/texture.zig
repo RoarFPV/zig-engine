@@ -9,6 +9,8 @@ const Vec4f = @import("../core/vector.zig").Vec4f;
 const Mat44f = @import("../core/matrix.zig").Mat44f;
 const Profile = @import("../core/profiler.zig").Profile;
 
+pub const trace = @import("../tracy.zig").trace;
+
 pub const Format = enum {
     GRAY8,
     RGB8,
@@ -29,10 +31,10 @@ pub const Texture = struct {
     pub fn init(f: Format, w: u32, h: u32, pixelBytes: u8, data: []u8) Texture {
         return Texture{
             .format = f,
-            .width = @intToFloat(f32, w),
-            .height = @intToFloat(f32, h),
-            .iwidth = @intCast(i32, w),
-            .iheight = @intCast(i32, h),
+            .width = @as(f32, @floatFromInt(w)),
+            .height = @as(f32, @floatFromInt(h)),
+            .iwidth = @as(i32, @intCast(w)),
+            .iheight = @as(i32, @intCast(h)),
             .colors = data,
             .widthBytes = w * pixelBytes,
             .heightBytes = h * pixelBytes,
@@ -41,40 +43,48 @@ pub const Texture = struct {
     }
 
     pub fn sample(self: Texture, x: f32, y: f32) Vec4f {
-        const tx = @floatToInt(usize, x * self.width);
-        const ty = @floatToInt(usize, y * self.height);
+        const tx = @as(usize, @intFromFloat(std.math.clamp(x, 0, 1) * (self.width - 1)));
+        const ty = @as(usize, @intFromFloat(std.math.clamp(y, 0, 1) * (self.height - 1)));
         const index = ty * self.widthBytes + tx * self.pixelWidth;
 
         return Vec4f.init(self.sampleR(index), self.sampleG(index), self.sampleB(index), self.sampleA(index));
     }
 
     pub fn samplePixel(self: Texture, x: i32, y: i32) Vec4f {
-        const tx = @intCast(u32, std.math.clamp(x, 0, self.iwidth));
-        const ty = @intCast(u32, std.math.clamp(y, 0, self.iheight));
+        const tx = @as(u32, @intCast(std.math.clamp(x, 0, self.iwidth - 1)));
+        const ty = @as(u32, @intCast(std.math.clamp(y, 0, self.iheight - 1)));
         const index = ty * self.widthBytes + tx * self.pixelWidth;
 
-        return Vec4f.init(self.sampleR(index), self.sampleG(index), self.sampleB(index), self.sampleA(index));
+        return switch (self.format) {
+            .GRAY8 => {
+                const color = @as(f32, @floatFromInt(self.colors[index])) / 255.0;
+                return Vec4f.init(color, color, color, 1.0);
+            },
+            //.RGB8, .RGBA8 => @intToFloat(f32, self.colors[index + 1]) / 255.0,
+            //else => 0.0
+            else => Vec4f.init(self.sampleR(index), self.sampleG(index), self.sampleB(index), self.sampleA(index)),
+        };
     }
 
     pub fn sampleR(self: Texture, index: usize) f32 {
         return switch (self.format) {
-            .GRAY8, .RGB8, .RGBA8 => @intToFloat(f32, self.colors[index]) / 255.0,
+            .GRAY8, .RGB8, .RGBA8 => @as(f32, @floatFromInt(self.colors[index])) / 255.0,
             //else => 0.0
         };
     }
 
     pub fn sampleG(self: Texture, pixel: usize) f32 {
         return switch (self.format) {
-            .GRAY8 => @intToFloat(f32, self.colors[pixel]) / 255.0,
-            .RGB8, .RGBA8 => @intToFloat(f32, self.colors[pixel + 1]) / 255.0,
+            .GRAY8 => @as(f32, @floatFromInt(self.colors[pixel])) / 255.0,
+            .RGB8, .RGBA8 => @as(f32, @floatFromInt(self.colors[pixel + 1])) / 255.0,
             //else => 0.0
         };
     }
 
     pub fn sampleB(self: Texture, pixel: usize) f32 {
         return switch (self.format) {
-            .GRAY8 => @intToFloat(f32, self.colors[pixel]) / 255.0,
-            .RGB8, .RGBA8 => @intToFloat(f32, self.colors[pixel + 2]) / 255.0,
+            .GRAY8 => @as(f32, @floatFromInt(self.colors[pixel])) / 255.0,
+            .RGB8, .RGBA8 => @as(f32, @floatFromInt(self.colors[pixel + 2])) / 255.0,
             //else => 0.0
         };
     }
@@ -82,17 +92,20 @@ pub const Texture = struct {
     pub fn sampleA(self: Texture, pixel: usize) f32 {
         return switch (self.format) {
             .RGB8, .GRAY8 => 1.0,
-            .RGBA8 => @intToFloat(f32, self.colors[pixel + 3]) / 255.0,
+            .RGBA8 => @as(f32, @floatFromInt(self.colors[pixel + 3])) / 255.0,
             //else => 0.0
         };
     }
 
     pub fn sampleBilinear(self: Texture, x: f32, y: f32) Vec4f {
-        const tx = @floatToInt(i32, x * self.width);
-        const ty = @floatToInt(i32, y * self.height);
+        const zone = trace(@src());
+        defer zone.end();
 
-        const dx = x * self.width - @intToFloat(f32, tx);
-        const dy = y * self.height - @intToFloat(f32, ty);
+        const tx = @as(i32, @intFromFloat(std.math.clamp(x, 0, 1) * (self.width - 1)));
+        const ty = @as(i32, @intFromFloat(std.math.clamp(y, 0, 1) * (self.height - 1)));
+
+        const dx = x * self.width - @as(f32, @floatFromInt(tx));
+        const dy = y * self.height - @as(f32, @floatFromInt(ty));
 
         const s0 = self.samplePixel(tx, ty);
         const s1 = self.samplePixel(tx + 1, ty);
