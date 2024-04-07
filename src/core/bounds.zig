@@ -23,14 +23,26 @@ pub const Bounds = struct {
     }
 
     pub fn topLeftHandLimit(self: *Bounds) void {
-        self.min.sub(Vec4f.one().divDup(2.0));
+        const half = Vec4f.splat(0.5);
+        self.min.sub(half);
         self.min.ceil();
 
-        self.max.sub(Vec4f.one().divDup(2.0));
+        self.max.sub(half);
         self.max.ceil();
     }
 
     pub fn size(self: Bounds) Vec4f {
         return self.max.subDup(self.min);
+    }
+
+    pub fn halfSize(self: Bounds) Vec4f {
+        return self.size().divDup(2);
+    }
+
+    pub fn center(self: Bounds) Vec4f {
+        return self.max
+            .subDup(self.min)
+            .divDup(2)
+            .addDup(self.min);
     }
 };

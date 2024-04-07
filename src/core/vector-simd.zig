@@ -208,6 +208,19 @@ pub fn Vec4(comptime eT: type) type {
             return Self{ .v = self.v / other.v };
         }
 
+        pub inline fn pow(self: *Self, other: Self) void {
+            self.v = self.powDup(other).v;
+        }
+
+        pub inline fn powDup(self: *Self, other: Self) Self {
+            return Self{ .v = .{
+                std.math.pow(eT, self.v[0], other.v[0]),
+                std.math.pow(eT, self.v[1], other.v[1]),
+                std.math.pow(eT, self.v[2], other.v[2]),
+                std.math.pow(eT, self.v[3], other.v[3]),
+            } };
+        }
+
         pub inline fn dot3(self: Self, other: Self) eT {
             var vself = self.v;
             vself[3] = 0;
@@ -245,7 +258,7 @@ pub fn Vec4(comptime eT: type) type {
             self.v -= @as(Vector4, @splat(scalar));
         }
 
-        pub inline fn negDup(self: Self) Self {
+        pub inline fn neg(self: Self) Self {
             return .{ .v = -self.v };
         }
         /// Returns vector length

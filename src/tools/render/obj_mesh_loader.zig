@@ -235,7 +235,7 @@ pub fn importObjFile(allocator: *Allocator, file_path: []const u8) !Mesh {
         if (read <= 4)
             continue;
 
-        std.debug.print("{s}\n", .{line});
+        std.debug.print("{}: {s}\n", .{ lineCount, line });
         // std.debug.warn("[{any}]: {any}\n", .{lineCount, line});
         switch (line[0]) {
             // vertex information
@@ -257,7 +257,8 @@ pub fn importObjFile(allocator: *Allocator, file_path: []const u8) !Mesh {
 
                     // vertex normal
                     'n' => {
-                        try normals.append(try parseVector(line[3..]));
+                        const normal = (try parseVector(line[3..])).normalized3();
+                        try normals.append(normal);
                     },
                     else => continue,
                 }

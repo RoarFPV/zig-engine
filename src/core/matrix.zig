@@ -4,8 +4,8 @@ const vector = @import("vector.zig");
 const Vec4f = vector.Vec4f;
 const assert_f32_equal = vector.assert_f32_equal;
 
-const PI = 3.1415926535897932384626433832795;
-const DEG2RAD = PI / 180.0;
+pub const PI = 3.1415926535897932384626433832795;
+pub const DEG2RAD = PI / 180.0;
 
 pub const Mat44f = struct {
     mm: [4]Vec4f,

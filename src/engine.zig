@@ -57,11 +57,13 @@ var renderSingleFrame: bool = false;
 // };
 
 pub const systemConfig = sys.Config{
-    .windowWidth = 1024,
+    //.windowWidth = 1024,
+    .windowWidth = 1260,
     .windowHeight = 768,
     // .renderWidth = 328,
     // .renderHeight = 200,
-    .renderWidth = 640,
+    // .renderWidth = 640,
+    .renderWidth = 787,
     .renderHeight = 480,
     .maxFps = 60,
     .fullscreen = false,
@@ -222,14 +224,29 @@ pub fn main() !void {
 pub fn displayProfileUi(self: *Profile, x: i32, y: i32, lineSize: i32, maxWidth: f32, maxDepth: u8, targetNs: f32) void {
     const mainSample = self.samples.items[1];
     // const totalBegin = @intToFloat(f32, mainSample.begin - self.frameStartTime);
-    const totalEnd = @as(f32, @floatFromInt(mainSample.end - self.frameStartTime));
+    const totalEnd: f32 = @floatFromInt(mainSample.end.since(self.frameStartTime));
     const totalTime = targetNs * 2; //@intToFloat(f32, mainSample.end-mainSample.begin);
 
+    var ny = y + font.glyphHeight + lineSize;
+    // y += 10;
+
     const targetx = x + @as(i32, @intFromFloat((targetNs / totalTime) * maxWidth));
-    render.drawLine(targetx, y - 2, targetx, y + lineSize * @as(i32, @intCast(maxDepth)), Color.fromNormal(0.5, 0.0, 0.2, 0.7));
+    render.drawLine(
+        targetx,
+        ny - 2,
+        targetx,
+        ny + lineSize * @as(i32, @intCast(maxDepth)),
+        Color.fromNormal(0.5, 0.0, 0.2, 0.7),
+    );
 
     const targetmidx = x + @as(i32, @intFromFloat(((targetNs / 2) / totalTime) * maxWidth));
-    render.drawLine(targetmidx, y - 2, targetmidx, y + lineSize * @as(i32, @intCast(maxDepth)), Color.fromNormal(0.3, 0.3, 0.3, 0.7));
+    render.drawLine(
+        targetmidx,
+        ny - 2,
+        targetmidx,
+        ny + lineSize * @as(i32, @intCast(maxDepth)),
+        Color.fromNormal(0.3, 0.3, 0.3, 0.7),
+    );
 
     for (self.samples.items, 0..) |sample, i| {
         if (i > self.nextSample)
@@ -238,23 +255,27 @@ pub fn displayProfileUi(self: *Profile, x: i32, y: i32, lineSize: i32, maxWidth:
         if (sample.depth >= maxDepth)
             continue;
 
-        if (i == 0 or sample.begin == 0 or sample.begin < self.frameStartTime)
+        if (i == 0 or sample.begin.timestamp == 0 or sample.begin.order(self.frameStartTime) == std.math.Order.lt)
             continue;
 
-        const begin = @as(f32, @floatFromInt(sample.begin - self.frameStartTime));
-        const end = @as(f32, @floatFromInt(sample.end - self.frameStartTime));
+        const begin: f32 = @floatFromInt(sample.begin.since(self.frameStartTime));
+        const end: f32 = @floatFromInt(sample.end.since(self.frameStartTime));
         // const duration = end-begin;
 
         const cs = std.math.clamp(blend.invLerp(f32, 0, targetNs, totalEnd), 0.0, 1.0);
 
         const startx = x + @as(i32, @intFromFloat(std.math.clamp(begin / totalTime, 0.0, 4.0) * maxWidth));
         const finishx = x + @as(i32, @intFromFloat(std.math.clamp(end / totalTime, 0.0, 4.0) * maxWidth));
-        const ystart = y + lineSize * @as(i32, @intCast(sample.depth));
+        const ystart = ny + lineSize * @as(i32, @intCast(sample.depth));
 
-        //std.debug.warn("{} x: {}, fx:{}, y:{}, b:{}, e:{}, d:{}, t:{}\n", .{sample.depth, startx, finishx, ystart, begin, end, duration, sample.tag});
+        // std.debug.warn("{} x: {}, fx:{}, y:{}, b:{}, e:{}, d:{}, t:{}\n", .{sample.depth, startx, finishx, ystart, begin, end, duration, sample.tag});
 
         render.drawLine(startx, ystart, finishx, ystart, Color.fromNormal(cs * cs, (1 - (cs * cs)), 0.2, 1));
     }
+
+    var buf: [64]u8 = undefined;
+    const b = std.fmt.bufPrint(&buf, "{d:.3}", .{totalEnd / 1_000_000.0}) catch return;
+    render.drawString(&font, b, x, y, Color.white().toNormalVec4f());
 }
 
 // 0 x: 2, fx:202, y:2, b:2.61e+02, e:7.813682e+06, d:7.813421e+06, t:engine.main

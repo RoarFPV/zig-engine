@@ -79,8 +79,8 @@ pub const Stats = struct {
     jobWaitCount: u32 = 0,
     jobCount: u32 = 0,
 
-    renderStartTime: u64 = 0,
-    renderEndTime: u64 = 0,
+    renderStartTime: std.time.Instant = undefined,
+    renderEndTime: std.time.Instant = undefined,
 
     pub fn init() Self {
         return Self{
@@ -102,7 +102,7 @@ pub const Stats = struct {
     pub fn reset(self: *Self) void {
         const ti = @typeInfo(Self);
         inline for (ti.Struct.fields) |field| {
-            @field(self, field.name) = 0;
+            @field(self, field.name) = undefined;
         }
     }
 
@@ -114,8 +114,8 @@ pub const Stats = struct {
     // }
 
     pub fn print(self: *Self) void {
-        std.debug.print("{} ns [ m({}, {}|{d:.2}%), t({}, {}|{d:.2}%, <{d}, |<{d}, bf{d}), p({}, {}|{d:.2}%) ]\n", .{
-            (self.renderEndTime - self.renderStartTime),
+        std.debug.print("{d:.3} ms [ m({}, {}|{d:.2}%), t({}, {}|{d:.2}%, <{d}, |<{d}, bf{d}), p({}, {}|{d:.2}%) ]\n", .{
+            @as(f32, @floatFromInt(self.renderEndTime.since(self.renderStartTime))) / 1_000_000.0,
             self.renderedMeshes,
             self.totalMeshes,
             @as(f32, @floatFromInt(self.renderedMeshes)) / @as(f32, @floatFromInt(self.totalMeshes)) * 100.0,
@@ -165,7 +165,8 @@ pub const TriRasterData = struct {
     rawVertex: [3]Vec4f = undefined,
 
     // transformed and projected verticies
-    screenVertex: [3]Vec4f = undefined, // Projection * Model * View
+    clipVertex: [3]Vec4f = undefined, // Projection * Model * View
+    screenVertex: [3]Vec4f = undefined, // Projection * Model * View / w
     cameraVertex: [3]Vec4f = undefined, // Model * View
     worldVertex: [3]Vec4f = undefined, // Model
 
@@ -229,7 +230,7 @@ const Frustum = struct {
 
         self.planes[@intFromEnum(Planes.Near)] = .{
             .position = position.addDup(forward.scale3Dup(znear)),
-            .normal = forward.negDup(),
+            .normal = forward.neg(),
         };
         self.planes[@intFromEnum(Planes.Far)] = .{
             .position = p2.addDup(forwardFar),
@@ -352,7 +353,7 @@ pub fn beginFrame(profiler: ?*Profile) *u8 {
 
     stats.reset();
     const now = std.time.Instant.now() catch std.time.Instant{ .timestamp = 0 };
-    stats.renderStartTime = now.timestamp;
+    stats.renderStartTime = now;
     currentBuffer = ~currentBuffer;
 
     colorBuffer[currentBuffer].clearDefault();
@@ -368,15 +369,39 @@ pub fn beginFrame(profiler: ?*Profile) *u8 {
     return &colorBuffer[currentBuffer].bufferStart().color[0];
 }
 
+pub var useSingleBB: bool = true;
+
 fn renderTris() void {
     const zone = trace(@src());
     defer zone.end();
 
-    for (0..triQueue.len) |t| {
-        var tri = triQueue.get(t);
+    var next: usize = 0;
+    while (next < triQueue.len) {
+        defer next += 1;
+
+        var tri = triQueue.get(next);
 
         //shadeTriSpan(&tri);
-        shadeTriBB(&tri);
+        // shadeTriBB(&tri, tri.screenBounds);
+        shadeTriBB(&tri, tri.screenBounds);
+    }
+
+    triQueue.len = 0;
+}
+
+fn renderTrisSingle() void {
+    const zone = trace(@src());
+    defer zone.end();
+
+    var next: usize = 0;
+    while (next < triQueue.len) {
+        defer next += 1;
+
+        var tri = triQueue.get(next);
+
+        //shadeTriSpan(&tri);
+        // shadeTriBB(&tri, tri.screenBounds);
+        shadeTriBBSingle(&tri, tri.screenBounds);
     }
 
     triQueue.len = 0;
@@ -384,9 +409,13 @@ fn renderTris() void {
 
 pub fn endFrame() void {
     const now = std.time.Instant.now() catch std.time.Instant{ .timestamp = 0 };
-    stats.renderEndTime = now.timestamp;
+    stats.renderEndTime = now;
 
-    renderTris();
+    if (useSingleBB) {
+        renderTrisSingle();
+    } else {
+        renderTris();
+    }
     //pixels.swapBuffers();
     {
         const zone = trace(@src());
@@ -458,6 +487,7 @@ pub fn drawMesh(m: *const Mat44f, v: *const Mat44f, p: *const Mat44f, mesh: *Mes
 
     var pixelsFilled: usize = 0;
     while (t < ids / 3) {
+        defer t += 1;
         tri.pixelsFilled = 0;
         tri.id = @as(u16, @truncate(t));
         tri.offset = t * 3;
@@ -465,7 +495,6 @@ pub fn drawMesh(m: *const Mat44f, v: *const Mat44f, p: *const Mat44f, mesh: *Mes
         if (drawTriJob(&tri)) {
             triQueue.appendAssumeCapacity(tri);
         }
-        t += 1;
 
         // if (tri.pixelsFilled > 0)
         //     break;
@@ -509,6 +538,12 @@ inline fn applyPixelShader(mv: *const Mat44f, mvp: *const Mat44f, pixel: Vec4f, 
     //return c.scaleDup(l);
 }
 
+fn clipTri(tri: *TriRasterData) void {
+    inline for (0..3) |axis| {
+        tri.edge[0].setW(@floatFromInt(@intFromBool(std.math.signbit(tri.clipVertex[0].v[axis]))));
+    }
+}
+
 fn drawTriJob(triJob: *TriRasterData) bool {
     const zone = trace(@src());
     defer zone.end();
@@ -529,22 +564,29 @@ fn drawTriJob(triJob: *TriRasterData) bool {
         tri.rawVertex[p] = mesh.vertexBuffer[tri.indicies[p]];
 
         tri.cameraVertex[p] = shader.vertexShader(&data.mv, offset, tri.rawVertex[p], shader);
-        tri.screenVertex[p] = shader.projectionShader(data.proj, tri.cameraVertex[p], viewport, shader);
+        tri.clipVertex[p] = shader.projectionShader(data.proj, tri.cameraVertex[p], viewport, shader);
 
         tri.normals[p] = mesh.vertexNormalBuffer[mesh.indexNormalBuffer[offset]];
-        tri.worldNormals[p] = data.model.mul33_vec4(tri.normals[p]);
-        tri.uv[p] = Vec4f.init(mesh.textureCoordBuffer[mesh.indexUVBuffer[(offset)] * 2 + 0], mesh.textureCoordBuffer[mesh.indexUVBuffer[(offset)] * 2 + 1], 0, 0);
+        tri.worldNormals[p] = data.model.mul33_vec4(tri.normals[p]).normalized3();
+        tri.uv[p] = Vec4f.init(
+            mesh.textureCoordBuffer[mesh.indexUVBuffer[(offset)] * 2 + 0],
+            mesh.textureCoordBuffer[mesh.indexUVBuffer[(offset)] * 2 + 1],
+            0,
+            0,
+        );
 
-        const w = tri.screenVertex[p].w();
+        const w = tri.clipVertex[p].w();
+
+        const inside = tri.clipVertex[p].abs().maxElement() <= w;
+        insideCount += @intFromBool(inside);
+
         if (w != 0.0) {
             tri.uv[p].div(w);
             //tri.screenVertex[p].divVec(Vec4f.init(1.0, 1.0, w, 1.0));
-            tri.screenVertex[p].div(w);
+            tri.screenVertex[p] = tri.clipVertex[p].divDup(w);
+            //tri.worldNormals[p].div(w);
             tri.uv[p].setW(1.0 / w);
         }
-
-        const inside = tri.screenVertex[p].abs().maxElement() <= 1.0;
-        insideCount += @intFromBool(inside);
 
         const half = viewport.scaleDup(0.5);
         const out = tri.screenVertex[p];
@@ -568,9 +610,13 @@ fn drawTriJob(triJob: *TriRasterData) bool {
     }
 
     // frustum cull
-    if (insideCount < 1) {
+    if (insideCount < 3) {
         return false;
     }
+
+    tri.edges[0] = (tri.clipVertex[1].subDup(tri.clipVertex[0]));
+    tri.edges[1] = (tri.clipVertex[2].subDup(tri.clipVertex[1]));
+    tri.edges[2] = (tri.clipVertex[0].subDup(tri.clipVertex[2]));
 
     tri.normal = getTriangleNormal(tri.cameraVertex);
     tri.backfacing = shader.backfaceCull and tri.cameraVertex[0].normalized3().dot3(tri.normal) > 0.0000000000001;
@@ -588,15 +634,15 @@ fn drawTriJob(triJob: *TriRasterData) bool {
         p += 1;
     }
 
-    if (std.math.isInf(tri.screenBounds.min.maxElement()) or std.math.isInf(tri.screenBounds.max.maxElement())) {
-        return false;
-    }
-
-    // // Too small to see
-    // if (tri.screenArea <= 0) {
-    //     _ = @atomicRmw(u32, &stats.trisTooSmall, .Add, 1, .SeqCst);
+    // if (std.math.isInf(tri.screenBounds.min.maxElement()) or std.math.isInf(tri.screenBounds.max.maxElement())) {
     //     return false;
     // }
+
+    // // Too small to see
+    if (tri.screenArea <= 0) {
+        _ = @atomicRmw(u32, &stats.trisTooSmall, .Add, 1, .SeqCst);
+        return false;
+    }
 
     const rb = renderBounds;
     tri.screenBounds.limit(rb);
@@ -800,13 +846,64 @@ fn shadeTriSpan(triData: *TriRasterData) void {
     }
 }
 
-fn shadeTriBB(triData: *TriRasterData) void {
-    const bounds = triData.screenBounds;
+fn shadeTriBB(triData: *TriRasterData, bounds: Bounds) void {
+    const size = bounds.size();
+    var b = bounds;
+    b.add(bounds.min.subDup(Vec4f.one()));
+    b.add(bounds.max.addDup(Vec4f.one()));
+
+    if (size.x() <= 10) {
+        shadeTriBBSingle(triData, b);
+        return;
+    }
+
+    const center = bounds.center();
+    // const half = bounds.halfSize();
+
+    const dirs = [4]Vec4f{
+        bounds.min,
+        bounds.max,
+        bounds.max.addDup(Vec4f.init(0, -size.y(), 0, 0)),
+        bounds.min.addDup(Vec4f.init(0, size.y(), 0, 0)),
+    };
+
+    var totalInside: u32 = 0;
+
+    inline for (0..dirs.len) |i| {
+        const p = dirs[i];
+
+        var triBary = Vec4f.triBarycentericCoordsOld(
+            triData.screenVertex[0],
+            triData.screenVertex[1],
+            triData.screenVertex[2],
+            p,
+        );
+
+        totalInside += @intFromBool(std.math.signbit(triBary.minElement()));
+    }
+
+    if (totalInside == dirs.len) {
+        // all inside so just render the volume
+        shadeTriBBSingle(triData, bounds);
+        return;
+    }
+
+    inline for (0..dirs.len) |i| {
+        const p = dirs[i];
+        var child = Bounds.init(center, center);
+        child.add(p);
+
+        shadeTriBB(triData, child);
+    }
+}
+
+fn shadeTriBBSingle(triData: *TriRasterData, bounds: Bounds) void {
     var y = bounds.min.y();
     var p: Vec4f = Vec4f.init(0, 0, 0, 0);
     var pixelNormal: Vec4f = Vec4f.init(0, 0, 0, 0);
     var fbc: Vec4f = Vec4f.init(0, 0, 0, 1);
     var uv: Vec4f = Vec4f.init(0, 0, 0, 1);
+    // const w = uv.w();
     // var c: Color = Color.black();
     const shader = triData.meshData.shader;
 
@@ -839,10 +936,12 @@ fn shadeTriBB(triData: *TriRasterData) void {
 
             var triBary = Vec4f.triBarycentericCoordsOld(triData.screenVertex[0], triData.screenVertex[1], triData.screenVertex[2], p);
 
-            if (std.math.signbit(triBary.minElement()))
+            const minBary = triBary.minElement();
+            if (std.math.signbit(minBary) or !std.math.isFinite(minBary))
                 continue;
 
             triBary.div(triData.screenArea);
+            triBary.setW(1.0);
 
             const z = (triBary.x() * triData.screenVertex[0].z() +
                 triBary.y() * triData.screenVertex[1].z() +
@@ -863,11 +962,26 @@ fn shadeTriBB(triData: *TriRasterData) void {
             if (write) {
                 // interpolate vertex colors across all pixels
                 fbc = triBary.triInterpArray(triData.color, 1.0, 1.0);
+                fbc.div(uv.w());
                 pixelNormal = triBary.triInterpArray(triData.worldNormals, 1.0, 1.0);
+                pixelNormal.div(uv.w());
                 uv = triBary.triInterpArray(triData.uv, 1.0, 1.0);
                 uv.div(uv.w());
 
-                const vc = shader.pixelShader(&triData.meshData.mv, &triData.meshData.mvp, pt, fbc, pixelNormal, uv, shader);
+                var pl = triBary.triInterpArray(triData.worldVertex, 1.0, 1.0);
+                pl.div(uv.w());
+
+                const vc = shader.pixelShader(
+                    triData.meshData.model,
+                    &triData.meshData.mv,
+                    &triData.meshData.mvp,
+                    pt,
+                    pl, //triData.worldNormals[0],
+                    fbc,
+                    pixelNormal,
+                    uv,
+                    shader,
+                );
 
                 triData.pixelsFilled += 1;
 

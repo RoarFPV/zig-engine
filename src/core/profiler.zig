@@ -17,14 +17,14 @@ pub const Profile = struct {
     depth: u8,
     samples: std.ArrayList(Sample),
     frameCount: u32,
-    frameStartTime: u64,
+    frameStartTime: Instant,
 
     /// Single timing block
     pub const Sample = struct {
         depth: u8,
         tag: []const u8,
-        begin: u64,
-        end: u64,
+        begin: Instant,
+        end: Instant,
     };
 
     pub fn init(allocator: *std.mem.Allocator) !Profile {
@@ -33,7 +33,7 @@ pub const Profile = struct {
             .nextSample = 1,
             .depth = 0,
             .frameCount = 0,
-            .frameStartTime = 0,
+            .frameStartTime = undefined,
             .samples = list, // [_]Profile.Sample{ .{.depth=0, .tag="", .begin=0, .end=0} }** SamplePoolCount,
         };
     }
@@ -49,8 +49,7 @@ pub const Profile = struct {
         sample.tag = tag;
         //TODO: find out how to correctly handle a timer error here
 
-        const now = Instant.now() catch return id;
-        sample.begin = now.timestamp;
+        sample.begin = Instant.now() catch return id;
         return id;
     }
 
@@ -63,8 +62,7 @@ pub const Profile = struct {
         // const d = @atomicRmw(u8, &self.depth, .Sub, 1, .SeqCst);
 
         //TODO: find out how to correctly handle a timer error here
-        const now = Instant.now() catch return;
-        self.samples.items[id].end = now.timestamp;
+        self.samples.items[id].end = Instant.now() catch return;
     }
 
     /// Reset profile data for a new frame
@@ -75,8 +73,7 @@ pub const Profile = struct {
         self.samples.resize(1) catch return;
 
         //TODO: find out how to correctly handle a timer error here
-        const now = Instant.now() catch return;
-        self.frameStartTime = now.timestamp;
+        self.frameStartTime = Instant.now() catch return;
     }
 
     pub fn hasSamples(self: Profile) bool {
@@ -91,7 +88,7 @@ pub const Profile = struct {
             if (i > self.nextSample)
                 break;
 
-            if (i == 0 or sample.begin == 0)
+            if (i == 0 or sample.begin.timestamp == 0)
                 continue;
 
             var s = sample.depth;
@@ -100,8 +97,8 @@ pub const Profile = struct {
                 s -= 1;
             }
 
-            const begin = sample.begin - self.frameStartTime;
-            const end = sample.end - self.frameStartTime;
+            const begin = sample.begin.since(self.frameStartTime);
+            const end = sample.end.since(self.frameStartTime);
             try stream.print("[{}:{}] b:{} ns, e:{} ns, d:{} ns, t:{}\n", .{ i, sample.depth, begin, end, end - begin, sample.tag });
         }
     }
@@ -114,11 +111,12 @@ pub const Profile = struct {
             if (i > self.nextSample)
                 break;
 
-            if (i == 0 or sample.begin == 0 or sample.begin < self.frameStartTime)
+            const order = sample.begin.order(self.frameStartTime);
+            if (i == 0 or order == std.math.Order.lt)
                 continue;
 
-            const begin = sample.begin - self.frameStartTime;
-            const end = sample.end - self.frameStartTime;
+            const begin = sample.begin.since(self.frameStartTime);
+            const end = sample.end.since(self.frameStartTime);
 
             try stream.print("{{ \"name\": \"{s}\", \"cat\":\"{s}\",\"ph\":\"{s}\",\"pid\": {any},\"tid\": {any},\"ts\": {any}, \"dur\":{any} }}", .{ sample.tag, "PERF", "X", 1, 1, begin, end - begin });
 

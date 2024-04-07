@@ -172,8 +172,8 @@ pub fn endUpdate() u32 {
 
     var t1 = @as(u32, @intCast(c.SDL_GetTicks()));
     const dtInt = t1 - t0;
-    if (dtInt < config.targetDt())
-        c.SDL_Delay((config.targetDt() - dtInt) - 1);
+    // if (dtInt < config.targetDt())
+    //     c.SDL_Delay((config.targetDt() - dtInt) - 1);
 
     t0 = t1;
 
