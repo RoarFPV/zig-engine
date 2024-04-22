@@ -50,7 +50,7 @@ pub const Error = error{InvalidImageFormat};
 pub fn importTGAFile(allocator: *Allocator, file_path: []const u8) !Texture {
     const cwd = std.fs.cwd();
 
-    var resolvedPath = try std.fs.path.resolve(allocator.*, &[_][]const u8{file_path});
+    const resolvedPath = try std.fs.path.resolve(allocator.*, &[_][]const u8{file_path});
     defer allocator.free(resolvedPath);
 
     std.debug.print("path: {s}", .{resolvedPath});
@@ -71,9 +71,20 @@ pub fn importTGAFile(allocator: *Allocator, file_path: []const u8) !Texture {
 
     const bufferSize = header.bufferSize();
 
-    var data = try allocator.alloc(u8, bufferSize);
+    const data = try allocator.alloc(u8, bufferSize);
 
     _ = try in.readAll(data);
 
-    return Texture.init(format, header.Width, header.Height, header.pixelWidth(), data);
+    const t = Texture.init(
+        allocator,
+        format,
+        header.Width,
+        header.Height,
+        header.pixelWidth(),
+        data,
+    );
+
+    allocator.free(data);
+
+    return t;
 }

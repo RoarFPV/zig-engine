@@ -47,6 +47,9 @@ pub fn init() !void {
         .projectionShader = projectVertex,
         .pixelShader = applyPixelShader,
         .texture = undefined,
+        .viewPos = Vec4f.zero(),
+        .roughness = 0.5,
+        .metal = 0.2,
     };
 
     var fontTex = try tools.TgaTexLoader.importTGAFile(&textureAllocator, "../../assets/mbf_small_7x7.tga");
@@ -326,7 +329,17 @@ pub inline fn reinhard(c: engine.Vec4f) engine.Vec4f {
 }
 
 ///
-fn applyPixelShader(mvp: *const engine.Mat44f, pixel: engine.Vec4f, color: engine.Vec4f, normal: engine.Vec4f, uv: engine.Vec4f, material: *engine.render.Material) engine.Vec4f {
+fn applyPixelShader(
+    m: *const Mat44f,
+    mv: *const Mat44f,
+    mvp: *const Mat44f,
+    pixel: Vec4f,
+    pixelLocal: Vec4f,
+    color: Vec4f,
+    normal: Vec4f,
+    uv: Vec4f,
+    material: *engine.render.Material,
+) engine.Vec4f {
     // var c = color.addDup(
     //   engine.Vec4f.init(
     //     (std.math.sin(uv.x*uv.y*1000)+1/2),
@@ -334,6 +347,9 @@ fn applyPixelShader(mvp: *const engine.Mat44f, pixel: engine.Vec4f, color: engin
     //     0,1)
     //   );
 
+    _ = m;
+    _ = pixelLocal;
+    _ = mv;
     _ = color;
     _ = pixel;
     _ = mvp;

@@ -162,7 +162,7 @@ pub fn parseFace(buf: []const u8) !struct {
 pub fn importObjFile(allocator: *Allocator, file_path: []const u8) !Mesh {
     const cwd = std.fs.cwd();
 
-    var resolvedPath = try std.fs.path.resolve(allocator.*, &[_][]const u8{file_path});
+    const resolvedPath = try std.fs.path.resolve(allocator.*, &[_][]const u8{file_path});
     defer allocator.free(resolvedPath);
 
     std.debug.print("obj path: {s}\n", .{resolvedPath});

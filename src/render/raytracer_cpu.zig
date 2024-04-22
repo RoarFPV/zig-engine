@@ -202,7 +202,7 @@ pub fn beginFrame(profiler: ?*Profile) *u8 {
     defer zone.end();
 
     profile = profiler;
-    var pprof = profile.?.beginSample("render.beginFrame");
+    var pprof = profile.?.beginSample("render.beginFrame", 0);
     defer profile.?.endSample(pprof);
 
     stats.reset();

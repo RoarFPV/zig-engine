@@ -9,6 +9,7 @@ pub fn Vec4(comptime eT: type) type {
     return struct {
         const Self = @This();
         pub const Vector4 = @Vector(4, eT);
+        pub const ElementType = eT;
 
         v: Vector4,
 
@@ -148,7 +149,7 @@ pub fn Vec4(comptime eT: type) type {
         }
 
         pub fn eq(self: Self, other: Self, _epsilon: eT) bool {
-            const vabs = @fabs(self.v - other.v);
+            const vabs = @abs(self.v - other.v);
             return @reduce(.And, vabs < _epsilon);
         }
 
@@ -177,11 +178,8 @@ pub fn Vec4(comptime eT: type) type {
         }
 
         pub inline fn scale3Dup(self: Self, scalar: eT) Self {
-            var v = self.v;
-            var vscalar = @as(Vector4, @splat(scalar));
-            v[3] = 1.0;
-            vscalar[3] = 1.0;
-            return Self{ .v = v * vscalar };
+            const vscalar = Vector4{ scalar, scalar, scalar, 1 };
+            return .{ .v = self.v * vscalar };
         }
 
         pub inline fn div(self: *Self, scalar: eT) void {
@@ -189,11 +187,8 @@ pub fn Vec4(comptime eT: type) type {
         }
 
         pub inline fn div3(self: *Self, scalar: eT) void {
-            var v = self.v;
-            var vscalar = @as(Vector4, @splat(scalar));
-            v[3] = 1.0;
-            vscalar[3] = 1.0;
-            self.v = v / vscalar;
+            const vscalar = Vector4{ scalar, scalar, scalar, 1 };
+            self.v /= vscalar;
         }
 
         pub inline fn divDup(self: Self, scalar: eT) Self {
@@ -222,16 +217,13 @@ pub fn Vec4(comptime eT: type) type {
         }
 
         pub inline fn dot3(self: Self, other: Self) eT {
-            var vself = self.v;
-            vself[3] = 0;
-            var vother = other.v;
-            vother[3] = 0;
-            return @reduce(.Add, (vself * vother));
+            const v: Vector4 = .{ 1, 1, 1, 0 };
+            return @reduce(.Add, v * self.v * other.v);
             //return self.x() * other.x() + self.y() * other.y() + self.z() * other.z();
         }
 
         pub inline fn abs(self: Self) Self {
-            return .{ .v = @fabs(self.v) };
+            return .{ .v = @abs(self.v) };
         }
 
         pub inline fn dot(self: Self, other: Self) eT {
@@ -243,7 +235,12 @@ pub fn Vec4(comptime eT: type) type {
         }
 
         pub inline fn cross3(self: Self, other: Self) Self {
-            return Self.init(self.y() * other.z() - self.z() * other.y(), self.z() * other.x() - self.x() * other.z(), self.x() * other.y() - self.y() * other.x(), 1);
+            return Self.init(
+                self.y() * other.z() - self.z() * other.y(),
+                self.z() * other.x() - self.x() * other.z(),
+                self.x() * other.y() - self.y() * other.x(),
+                1,
+            );
         }
 
         pub inline fn sub(self: *Self, other: Self) void {
@@ -282,12 +279,12 @@ pub fn Vec4(comptime eT: type) type {
         }
 
         pub inline fn length3(self: Self) eT {
-            return math.sqrt(self.length3Sqr());
+            return @sqrt(self.length3Sqr());
         }
 
         /// return length of vector squared. Avoids `math.sqrt`
         pub inline fn length3Sqr(self: Self) eT {
-            return self.x() * self.x() + self.y() * self.y() + self.z() * self.z();
+            return self.dot3(self);
         }
 
         /// make `length` of vector 1.0 while maintaining direction
@@ -298,8 +295,9 @@ pub fn Vec4(comptime eT: type) type {
 
         /// constant version of normalize that returns a new `Self` with length of 1.0
         pub inline fn normalized3(self: Self) Self {
-            const len = self.length3();
-            return Self.init(self.x() / len, self.y() / len, self.z() / len, self.w());
+            const len = @as(Vector4, @splat(self.length3()));
+            return .{ .v = self.v / len };
+            // return Self.init(self.x() / len, self.y() / len, self.z() / len, self.w());
             //return self.normalized();
         }
 
@@ -308,10 +306,10 @@ pub fn Vec4(comptime eT: type) type {
         }
 
         pub inline fn clamped01(self: Self) Self {
-            return .{ .v = self.clamped(0, 1) };
+            return .{ .v = self._clampedScalar(0, 1) };
         }
 
-        inline fn clamped(self: Self, minVec4: eT, maxVec4: eT) Vector4 {
+        inline fn _clampedScalar(self: Self, minVec4: eT, maxVec4: eT) Vector4 {
             const maxV = @as(Vector4, @splat(maxVec4));
             const minV = @as(Vector4, @splat(minVec4));
 
@@ -323,16 +321,20 @@ pub fn Vec4(comptime eT: type) type {
             return .{ .v = @max(self.v, maxV) };
         }
 
-        pub inline fn clamp(self: *Self, minVec4: eT, maxVec4: eT) void {
-            self.v = self.clamped(minVec4, maxVec4);
+        pub inline fn clampScalar(self: *Self, minVec4: eT, maxVec4: eT) void {
+            self.v = self._clampedScalar(minVec4, maxVec4);
         }
 
-        inline fn clampedVec(self: Self, minV: Self, maxV: Self) Vector4 {
+        inline fn _clampedVec(self: Self, minV: Self, maxV: Self) Vector4 {
             return @min(maxV.v, @max(minV.v, self.v));
         }
 
-        pub inline fn clampVec(self: *Self, minVec4: Self, maxVec4: Self) void {
-            self.v = self.clampedVec(minVec4, maxVec4);
+        pub inline fn clamped(self: Self, minVec4: Self, maxVec4: Self) Vec4f {
+            return .{ .v = self._clampedVec(minVec4, maxVec4) };
+        }
+
+        pub inline fn clamp(self: *Self, minVec4: Self, maxVec4: Self) void {
+            self.v = self._clampedVec(minVec4, maxVec4);
         }
 
         pub inline fn ceil(self: *Self) void {
@@ -397,13 +399,11 @@ pub fn Vec4(comptime eT: type) type {
             );
         }
 
-        pub fn triInterp(tri: Self, v0: Self, v1: Self, v2: Self, depth: eT, _w: eT) Self {
-            _ = depth;
-            _ = _w;
-            const vx = Vector4{ v0.x(), v1.x(), v2.x(), 0 };
-            const vy = Vector4{ v0.y(), v1.y(), v2.y(), 0 };
-            const vz = Vector4{ v0.z(), v1.z(), v2.z(), 0 };
-            const vw = Vector4{ v0.w(), v1.w(), v2.w(), 0 };
+        pub fn triInterp(tri: Self, v0: Self, v1: Self, v2: Self, tw: f32) Self {
+            const vx = Vector4{ v0.x(), v1.x(), v2.x(), tw };
+            const vy = Vector4{ v0.y(), v1.y(), v2.y(), tw };
+            const vz = Vector4{ v0.z(), v1.z(), v2.z(), tw };
+            const vw = Vector4{ v0.w(), v1.w(), v2.w(), tw };
 
             return Self.init(
                 tri.dotRaw(vx),
@@ -413,14 +413,32 @@ pub fn Vec4(comptime eT: type) type {
             );
         }
 
-        pub fn triInterpArray(tri: Self, v: [3]Self, depth: eT, _w: eT) Self {
+        pub fn triInterpArray(tri: Self, v: [3]Self, tw: f32) Self {
             return triInterp(
                 tri,
                 v[0],
                 v[1],
                 v[2],
-                depth,
-                _w,
+                tw,
+            );
+        }
+
+        pub fn triInterpArrayScale(tri: Self, v: [3]Self, tw: f32, s: f32) Self {
+            return triInterp(
+                tri,
+                v[0],
+                v[1],
+                v[2],
+                tw,
+            ).scaleDup(s);
+        }
+
+        pub fn triInterpBaryArray(tri: Self, v: [4]Self) Self {
+            return Self.init(
+                tri.dotRaw(v[0].v),
+                tri.dotRaw(v[1].v),
+                tri.dotRaw(v[2].v),
+                tri.dotRaw(v[3].v),
             );
         }
 
@@ -458,6 +476,24 @@ pub fn Vec4(comptime eT: type) type {
 
 pub const Vec4f = Vec4(f32);
 pub const Vec4i = Vec4(i32);
+
+pub fn Vec4fToVec4i(v: Vec4f) Vec4i {
+    return .{ .v = .{
+        @as(Vec4i.ElementType, @intFromFloat(v.v[0])),
+        @as(Vec4i.ElementType, @intFromFloat(v.v[1])),
+        @as(Vec4i.ElementType, @intFromFloat(v.v[2])),
+        @as(Vec4i.ElementType, @intFromFloat(v.v[3])),
+    } };
+}
+
+pub fn Vec4iToVec4f(v: Vec4i) Vec4f {
+    return .{ .v = .{
+        @as(Vec4f.ElementType, @floatFromInt(v.v[0])),
+        @as(Vec4f.ElementType, @floatFromInt(v.v[1])),
+        @as(Vec4f.ElementType, @floatFromInt(v.v[2])),
+        @as(Vec4f.ElementType, @floatFromInt(v.v[3])),
+    } };
+}
 
 // pub const Vec4f = struct {
 //     v: Vector4f,

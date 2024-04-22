@@ -23,12 +23,13 @@ pub const Profile = struct {
     pub const Sample = struct {
         depth: u8,
         tag: []const u8,
+        color: u8,
         begin: Instant,
         end: Instant,
     };
 
     pub fn init(allocator: *std.mem.Allocator) !Profile {
-        var list = try std.ArrayList(Sample).initCapacity(allocator.*, SamplePoolCount);
+        const list = try std.ArrayList(Sample).initCapacity(allocator.*, SamplePoolCount);
         return Profile{
             .nextSample = 1,
             .depth = 0,
@@ -39,14 +40,15 @@ pub const Profile = struct {
     }
 
     /// Start tracking wall clock time
-    pub fn beginSample(self: *Profile, tag: []const u8) u32 {
-        const id = @atomicRmw(u32, &self.nextSample, .Add, 1, .SeqCst);
+    pub fn beginSample(self: *Profile, tag: []const u8, color: u8) u32 {
+        const id = @atomicRmw(u32, &self.nextSample, .Add, 1, .seq_cst);
 
         var sample = self.samples.addOne() catch return 0;
         assert(id < self.samples.items.len);
 
-        sample.depth = @atomicRmw(u8, &self.depth, .Add, 1, .SeqCst);
+        sample.depth = @atomicRmw(u8, &self.depth, .Add, 1, .seq_cst);
         sample.tag = tag;
+        sample.color = color;
         //TODO: find out how to correctly handle a timer error here
 
         sample.begin = Instant.now() catch return id;
@@ -59,7 +61,7 @@ pub const Profile = struct {
 
     // Stop tracking wall clock timing
     pub fn endSample(self: *Profile, id: u32) void {
-        // const d = @atomicRmw(u8, &self.depth, .Sub, 1, .SeqCst);
+        // const d = @atomicRmw(u8, &self.depth, .Sub, 1, .seq_cst);
 
         //TODO: find out how to correctly handle a timer error here
         self.samples.items[id].end = Instant.now() catch return;
@@ -131,7 +133,7 @@ pub const Profile = struct {
     pub fn jsonFileWrite(self: *Profile, allocator: std.mem.Allocator, filepath: []const u8) !void {
         const cwd = std.fs.cwd();
 
-        var resolvedPath = try std.fs.path.resolve(allocator, &[_][]const u8{filepath});
+        const resolvedPath = try std.fs.path.resolve(allocator, &[_][]const u8{filepath});
         defer allocator.free(resolvedPath);
 
         std.debug.print("path: {s}", .{resolvedPath});
@@ -161,21 +163,28 @@ pub const Sampler = struct {
     id: u32,
     owner: *Profile,
     tag: []const u8,
+    color: u8,
 
-    pub fn init(profiler: *Profile, tag: []const u8) Sampler {
-        return Sampler{ .owner = profiler, .id = 0, .tag = tag };
+    pub fn init(profiler: *Profile, tag: []const u8, color: u8) Sampler {
+        return Sampler{
+            .owner = profiler,
+            .id = 0,
+            .tag = tag,
+            .color = color,
+        };
     }
 
-    pub fn initAndBegin(profiler: *Profile, tag: []const u8) Sampler {
+    pub fn initAndBegin(profiler: *Profile, tag: []const u8, color: u8) Sampler {
         return Sampler{
             .owner = profiler,
             .tag = tag,
-            .id = profiler.beginSample(tag),
+            .id = profiler.beginSample(tag, color),
+            .color = color,
         };
     }
 
     pub fn begin(self: *Sampler) void {
-        self.id = self.profiler.beginSample(self.tag);
+        self.id = self.profiler.beginSample(self.tag, self.color);
     }
 
     pub fn end(self: *Sampler) void {

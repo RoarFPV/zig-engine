@@ -95,7 +95,7 @@ pub fn PixelBuffer(comptime PixelType: type) type {
             }
 
             return false;
-            //return if( @atomicRmw(PixelType, &self.*.buffer.items[index], .Min, value, .SeqCst ) == self.*.buffer[index] ) 0 else 1;
+            //return if( @atomicRmw(PixelType, &self.*.buffer.items[index], .Min, value, .seq_cst ) == self.*.buffer[index] ) 0 else 1;
         }
 
         pub fn setGreaterThan(self: *SelfType, x: i32, y: i32, value: PixelType) bool {
@@ -112,7 +112,7 @@ pub fn PixelBuffer(comptime PixelType: type) type {
             }
 
             return false;
-            //return if( @atomicRmw(PixelType, &self.*.buffer.items[index], .Min, value, .SeqCst ) == self.*.buffer[index] ) 0 else 1;
+            //return if( @atomicRmw(PixelType, &self.*.buffer.items[index], .Min, value, .seq_cst ) == self.*.buffer[index] ) 0 else 1;
         }
 
         pub fn resize(self: *SelfType, nW: i32, nH: i32) !void {
@@ -290,7 +290,7 @@ pub fn PixelRenderer(comptime PixelType: type) type {
 }
 
 test "Pixel Buffer" {
-    var allocator = std.heap.page_allocator;
+    const allocator = std.heap.page_allocator;
     var buf = try PixelBuffer(f32).init(10, 10, allocator);
 
     const data = 1.0;
@@ -308,7 +308,7 @@ fn assert_value(buf: *PixelBuffer(Vec2), expected: Vec2) void {
 }
 
 test "Pixel Line Renderer" {
-    var allocator = std.heap.page_allocator;
+    const allocator = std.heap.page_allocator;
     var buf = try PixelBuffer(Vec2).init(10, 10, allocator);
     defer buf.deinit();
 

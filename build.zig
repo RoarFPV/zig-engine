@@ -1,10 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-fn Path(p: []const u8) std.Build.LazyPath {
-    return .{ .path = p };
-}
-
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
@@ -28,34 +24,34 @@ pub fn build(b: *std.Build) void {
         .name = "zig-engine",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
-        .root_source_file = Path("src/engine.zig"),
+        .root_source_file = b.path("src/engine.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const exe_options = b.addOptions();
-    exe.addOptions("build_options", exe_options);
+    exe.root_module.addOptions("build_options", exe_options);
     exe_options.addOption(bool, "enable_tracy", tracy);
     exe_options.addOption(bool, "enable_tracy_callstack", tracy_callstack);
     exe_options.addOption(bool, "enable_tracy_allocation", tracy_allocation);
-    exe.strip = false;
+    exe.root_module.strip = false;
 
     if (tracy) {
         const tracyPath = "external/tracy/public";
 
         const client_cpp = .{ .path = std.fs.path.join(b.allocator, &[_][]const u8{ tracyPath, "TracyClient.cpp" }) catch unreachable };
         // On mingw, we need to opt into windows 7+ to get some features required by tracy.
-        const tracy_c_flags: []const []const u8 = if (target.isWindows() and target.getAbi() == .gnu)
+        const tracy_c_flags: []const []const u8 = if (target.result.os.tag == .windows and target.result.abi.isGnu())
             &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined", "-D_WIN32_WINNT=0x601" }
         else
             &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined" };
 
-        exe.addIncludePath(Path("external/tracy/public"));
+        exe.addIncludePath(b.path("external/tracy/public"));
         exe.addCSourceFile(.{ .file = client_cpp, .flags = tracy_c_flags });
         exe.linkLibCpp();
         exe.linkLibC();
 
-        if (target.isWindows()) {
+        if (target.result.os.tag == .windows) {
             exe.linkSystemLibrary("dbghelp");
             exe.linkSystemLibrary("ws2_32");
         }
@@ -64,11 +60,11 @@ pub fn build(b: *std.Build) void {
     if (builtin.os.tag == .windows) {
 
         //std.debug.print("b.build_root={s}",.{b.build_root.path});
-        const sdl_path = b.fmt("{?s}/external/win/SDL2", .{b.build_root.path});
+        const sdl_path = b.fmt("external/win/SDL2", .{});
         // std.debug.print("{s}", .{sdl_path});
-        exe.addLibraryPath(Path(b.fmt("{s}/lib/x64", .{sdl_path})));
-        exe.addIncludePath(Path(b.fmt("{s}/include", .{sdl_path})));
-        exe.addIncludePath(Path("C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.17763.0\\shared\\evntprov.h"));
+        exe.addLibraryPath(b.path(b.fmt("{s}/lib/x64", .{sdl_path})));
+        exe.addIncludePath(b.path(b.fmt("{s}/include", .{sdl_path})));
+        exe.addIncludePath(.{ .cwd_relative = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.17763.0\\shared\\evntprov.h" });
         b.installBinFile(b.fmt("{s}/lib/x64/SDL2.dll", .{sdl_path}), "SDL2.dll");
         exe.linkSystemLibrary("sdl2");
     } else {

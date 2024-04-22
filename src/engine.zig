@@ -8,11 +8,11 @@ const Timer = std.time.Timer;
 // engine imports
 pub const sys = @import("system/sys_sdl.zig");
 //pub const render = @import("render/raster_cpu_jobs.zig");
-//pub const render = @import("render/raytracer_cpu.zig");
+// pub const render = @import("render/raytracer_cpu.zig");
 pub const render = @import("render/raster_cpu_spans.zig");
 pub const input = @import("system/sys_input.zig");
 pub const game = @import("game/game_cubes.zig");
-//pub const game = @import("game/game_voxel.zig");
+// pub const game = @import("game/game_voxel.zig");
 // pub const game = @import("game/game_particle.zig");
 //pub const game = @import("game/game_oblivious.zig");
 
@@ -24,6 +24,7 @@ pub const Color = @import("core/color.zig").Color;
 pub const blend = @import("core/interp.zig");
 
 pub const Mesh = @import("render/mesh.zig").Mesh;
+pub const Terrain = @import("render/terrain.zig").Terrain;
 
 pub const tracy = @import("tracy.zig").tracy;
 pub const trace = tracy.trace;
@@ -31,6 +32,9 @@ pub const trace = tracy.trace;
 const tools = @import("tools.zig");
 
 pub var stdout = std.io.getStdOut();
+pub var deltaTimeNs: u64 = 0;
+pub var deltaTimeSec: f32 = 0;
+
 var bufferAllocator = std.heap.page_allocator;
 var textureAllocator = std.heap.page_allocator;
 pub var font: render.Font = undefined;
@@ -125,7 +129,7 @@ pub fn main() !void {
     try render.init(systemConfig.renderWidth, systemConfig.renderHeight, &bufferAllocator, profiler);
     defer render.shutdown();
 
-    var fontTex = try tools.TgaTexLoader.importTGAFile(&textureAllocator, "../../assets/mbf_small_7x7.tga");
+    const fontTex = try tools.TgaTexLoader.importTGAFile(&textureAllocator, "../../assets/mbf_small_7x7.tga");
 
     font = render.Font{
         .glyphWidth = 7,
@@ -152,13 +156,16 @@ pub fn main() !void {
     while (!quit) {
         const mainTrace = trace(@src());
         defer mainTrace.end();
+
+        const startTime = try std.time.Instant.now();
+
         {
             tracy.frameMark();
-            var el = Sampler.initAndBegin(profiler, "engine.main");
+            var el = Sampler.initAndBegin(profiler, "engine.main", 0);
             defer el.end();
 
             {
-                var supdate = Sampler.initAndBegin(profiler, "system.update");
+                var supdate = Sampler.initAndBegin(profiler, "system.update", 1);
                 defer supdate.end();
 
                 quit = !sys.beginUpdate();
@@ -166,32 +173,40 @@ pub fn main() !void {
 
             const b = render.beginFrame(profiler);
             {
-                var c = Sampler.initAndBegin(profiler, "game.update");
+                var c = Sampler.initAndBegin(profiler, "game.update", 2);
                 defer c.end();
                 if (!game.update())
                     break;
             }
 
             {
-                var ef = Sampler.initAndBegin(profiler, "render.endframe");
+                var ef = Sampler.initAndBegin(profiler, "render.endframe", 3);
                 defer ef.end();
                 render.endFrame();
             }
 
             {
-                var srt = Sampler.initAndBegin(profiler, "engine.render.profile");
+                var srt = Sampler.initAndBegin(profiler, "engine.render.profile", 0);
                 defer srt.end();
 
                 if (lastProfile.hasSamples()) {
-                    render.drawString(&font, "0123456789\n", 10, 50, Vec4f.one());
-                    displayProfileUi(lastProfile, 2, 2, 3, systemConfig.renderWidth - 5, 8, targetFrameTimeNs);
+                    // render.drawString(&font, "0123456789\n", 10, 50, Vec4f.one());
+                    displayProfileUi(
+                        lastProfile,
+                        2,
+                        2,
+                        5,
+                        systemConfig.renderWidth - 5,
+                        8,
+                        targetFrameTimeNs,
+                    );
                     //render.drawProgress(2, 2, 100, @intToFloat(f32, lastProfile.sampleTime(1)), targetFrameTimeNs );
                     //render.drawProgress(2, 5, 100, @intToFloat(f32, lastProfile.sampleTime(2)), targetFrameTimeNs );
                 }
             }
 
             {
-                var srt = Sampler.initAndBegin(profiler, "system.render.present");
+                var srt = Sampler.initAndBegin(profiler, "system.render.present", 2);
                 defer srt.end();
 
                 sys.updateRenderTexture(b, bufferLineSize);
@@ -199,21 +214,23 @@ pub fn main() !void {
             }
 
             {
-                var sup = Sampler.initAndBegin(profiler, "system.wait");
+                var sup = Sampler.initAndBegin(profiler, "system.wait", 1);
                 defer sup.end();
 
                 _ = sys.endUpdate();
             }
         }
 
-        if (!input.isKeyDown(input.KeyCode.SPACE)) {
-            lastProfile = profiler;
-            profiler = swapProfile();
+        lastProfile = profiler;
+        profiler = swapProfile();
+        profiler.nextFrame();
 
-            //   render.frameStats().print();
-            // try profiler.jsonPrint(stdout);
-            profiler.nextFrame();
-        }
+        const endTime = try std.time.Instant.now();
+
+        deltaTimeNs = endTime.since(startTime);
+
+        deltaTimeSec = @floatFromInt(deltaTimeNs);
+        deltaTimeSec /= (1000.0 * 1000.0 * 1000.0);
     }
 
     // try currentProfile().jsonFileWrite(bufferAllocator, "prof.json");
@@ -221,13 +238,21 @@ pub fn main() !void {
     // bufferAllocator.reset();
 }
 
+const colors = [_]Color{
+    Color.white(),
+    Color.red(),
+    Color.green(),
+    Color.blue(),
+    Color.fromNormal(0.5, 0.2, 1, 1),
+};
+
 pub fn displayProfileUi(self: *Profile, x: i32, y: i32, lineSize: i32, maxWidth: f32, maxDepth: u8, targetNs: f32) void {
     const mainSample = self.samples.items[1];
     // const totalBegin = @intToFloat(f32, mainSample.begin - self.frameStartTime);
     const totalEnd: f32 = @floatFromInt(mainSample.end.since(self.frameStartTime));
     const totalTime = targetNs * 2; //@intToFloat(f32, mainSample.end-mainSample.begin);
 
-    var ny = y + font.glyphHeight + lineSize;
+    const ny = y + font.glyphHeight + lineSize;
     // y += 10;
 
     const targetx = x + @as(i32, @intFromFloat((targetNs / totalTime) * maxWidth));
@@ -262,7 +287,7 @@ pub fn displayProfileUi(self: *Profile, x: i32, y: i32, lineSize: i32, maxWidth:
         const end: f32 = @floatFromInt(sample.end.since(self.frameStartTime));
         // const duration = end-begin;
 
-        const cs = std.math.clamp(blend.invLerp(f32, 0, targetNs, totalEnd), 0.0, 1.0);
+        // const cs = std.math.clamp(blend.invLerp(f32, 0, targetNs, totalEnd), 0.0, 1.0);
 
         const startx = x + @as(i32, @intFromFloat(std.math.clamp(begin / totalTime, 0.0, 4.0) * maxWidth));
         const finishx = x + @as(i32, @intFromFloat(std.math.clamp(end / totalTime, 0.0, 4.0) * maxWidth));
@@ -270,7 +295,7 @@ pub fn displayProfileUi(self: *Profile, x: i32, y: i32, lineSize: i32, maxWidth:
 
         // std.debug.warn("{} x: {}, fx:{}, y:{}, b:{}, e:{}, d:{}, t:{}\n", .{sample.depth, startx, finishx, ystart, begin, end, duration, sample.tag});
 
-        render.drawLine(startx, ystart, finishx, ystart, Color.fromNormal(cs * cs, (1 - (cs * cs)), 0.2, 1));
+        render.drawLine(startx, ystart, finishx, ystart, colors[sample.color]);
     }
 
     var buf: [64]u8 = undefined;

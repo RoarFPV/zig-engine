@@ -20,6 +20,8 @@ var viewMat = engine.Mat44f.identity();
 var mesh: engine.Mesh = undefined;
 var projMat: engine.Mat44f = undefined;
 
+// var terrain: engine.Terrain = undefined;
+
 var meshAllocator = std.heap.page_allocator;
 var textureAllocator = std.heap.page_allocator;
 var meshMaterial: engine.render.Material = undefined;
@@ -42,36 +44,39 @@ pub fn init() !void {
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/bed.obj");
     //mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/crates/crate-04-1.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/suzanne.obj");
-    mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/E1M1.bsp.geometry.tri.obj");
+    // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/E1M1.bsp.geometry.tri.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/castle.obj");
-    // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/landscape1.obj");
+    mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/landscape1.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/sponza.obj");
-    // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/plane.obj");
+    //mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/plane.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/axis.obj");
 
     //mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/Character.obj");
     // var  texture = try tools.TgaTexLoader.importTGAFile(textureAllocator, "../../assets/black_rock.tga");
-    var texture = try tools.TgaTexLoader.importTGAFile(&textureAllocator, "../../assets/grass.tga");
+    const texture = try tools.TgaTexLoader.importTGAFile(&textureAllocator, "../../assets/grass.tga");
+    // var heightmap = try tools.R32TexLoader.importR32File(&textureAllocator, "../../assets/heightmap.r32");
+
+    // terrain = try engine.Terrain.init(&meshAllocator, heightmap, heightmap.widthBytes, heightmap.heightBytes);
     // var texture = try tools.TgaTexLoader.importTGAFile(&textureAllocator, "../../assets/crates/diffuse.tga");
 
     meshMaterial = engine.render.Material{
         .backfaceCull = true,
         .depthTest = 1,
         // .lightDirection = engine.Vec4f.init(-0.913913, 0.389759, -0.113369, 1).normalized3(),
-        .lightDirection = engine.Vec4f.init(1, -0.3, 1, 0).normalized3(),
+        .lightDirection = engine.Vec4f.init(1, -0.5, 1, 0).normalized3(),
         .lightColor = engine.Vec4f.one(),
-        .lightIntensity = 1.2,
+        .lightIntensity = 10.2,
         .vertexShader = applyVertexShader,
         .projectionShader = projectVertexNoDiv,
         .pixelShader = shader_lit_pbr_texture0_frag,
         // .pixelShader = shader_lit_texture0_frag,
         .texture = texture,
-        .roughness = 0.6,
+        .roughness = 0.4,
         .metal = 0.1,
         .viewPos = engine.Vec4f.zero(),
     };
 
-    var fontTex = try tools.TgaTexLoader.importTGAFile(&textureAllocator, "../../assets/mbf_small_7x7.tga");
+    const fontTex = try tools.TgaTexLoader.importTGAFile(&textureAllocator, "../../assets/mbf_small_7x7.tga");
 
     font = engine.render.Font{
         .glyphWidth = 7,
@@ -79,7 +84,9 @@ pub fn init() !void {
         .texture = fontTex,
     };
 
-    // modelMat.translate(engine.Vec4f.init(0, -15.0, 0.0, 0));
+    modelMat.translate(engine.Vec4f.init(0, 0.0, -12.0, 0));
+
+    engine.render.viewConfig = engine.Vec4f.init(nearZ, farZ, fovY, aspect);
 }
 
 pub fn shutdown() !void {
@@ -87,8 +94,8 @@ pub fn shutdown() !void {
     meshAllocator.deinit();
 }
 
-const moveSpeed = 1;
-const sprintMod = 10;
+const moveSpeed = 100;
+const sprintMod = 100;
 
 var mousePos = engine.Vec4f.zero();
 var cameraPos = engine.Vec4f.zero();
@@ -101,6 +108,8 @@ var singleFrameKeyDown: bool = false;
 var yawMat = engine.Mat44f.identity();
 var pitchMat = engine.Mat44f.identity();
 var position = engine.Vec4f.zero();
+var orientation = engine.Vec4f.zero();
+var lightDir = engine.Vec4f.init(1, -0.5, 1, 0).normalized3();
 
 pub fn update() bool {
     // const tracy = trace(@src());
@@ -115,35 +124,50 @@ pub fn update() bool {
 
     const speed = moveSpeed / (input.keyStateFloat(input.KeyCode.LCTRL) * sprintMod + 1) + (input.keyStateFloat(input.KeyCode.LSHIFT) * sprintMod);
 
-    const depth = -(input.keyStateFloat(input.KeyCode.W) - input.keyStateFloat(input.KeyCode.S)) * speed;
+    const depth = (input.keyStateFloat(input.KeyCode.W) - input.keyStateFloat(input.KeyCode.S)) * speed;
     const horizontal = (input.keyStateFloat(input.KeyCode.D) - input.keyStateFloat(input.KeyCode.A)) * speed;
     const vertical = (input.keyStateFloat(input.KeyCode.UP) - input.keyStateFloat(input.KeyCode.DOWN)) * speed;
 
-    const posOffset = engine.Vec4f.init(horizontal, vertical, depth, 1);
-    const rot = (input.keyStateFloat(input.KeyCode.Q) - input.keyStateFloat(input.KeyCode.E)) * speed;
+    // const posOffset = engine.Vec4f.init(horizontal, vertical, depth, 1).scaleDup(engine.deltaTimeSec);
+    const rot = (input.keyStateFloat(input.KeyCode.Q) - input.keyStateFloat(input.KeyCode.E)) * 10;
 
     const rightButton = @as(f32, @floatFromInt(input.getMouseRight()));
 
-    const yaw = mouseDelta.x();
-    const pitch = mouseDelta.y();
+    const yaw = -mouseDelta.x();
+    const pitch = -mouseDelta.y();
 
     currentMouse.setZ(yaw);
     currentMouse.setW(pitch);
 
     const exposure = (input.keyStateFloat(input.KeyCode.U) - input.keyStateFloat(input.KeyCode.J)) * 0.1;
     const bright = input.keyStateFloat(input.KeyCode.I) - input.keyStateFloat(input.KeyCode.K) * 2.0;
-    meshMaterial.lightIntensity = @max(meshMaterial.lightIntensity + bright, 0.0);
+    meshMaterial.lightIntensity = @max(meshMaterial.lightIntensity + bright * engine.deltaTimeSec, 0.0);
     exposure_bias = @max(exposure_bias + exposure, 0.0);
 
     mousePos = currentMouse;
+
+    // Update Camera
+
+    orientation.add(engine.Vec4f.init(pitch, yaw, 0, 0).scaleDup(rightButton));
+
     var trans = engine.Mat44f.identity();
 
-    //trans.mul33(viewMat);
-    trans.translate(posOffset.neg());
-    trans.mul(engine.Mat44f.rotX(rightButton * pitch));
-    trans.mul(engine.Mat44f.rotY(rightButton * yaw));
-    trans.mul(viewMat);
+    trans.mul(engine.Mat44f.rotY(orientation.y()));
+    trans.mul(engine.Mat44f.rotX(orientation.x()));
 
+    var posOffset = engine.Vec4f.init(horizontal, 0, -depth, 1);
+    posOffset.scale(engine.deltaTimeSec);
+    const worldPosOffset = trans.mul33_vec4(posOffset);
+
+    cameraPos.add(worldPosOffset);
+    cameraPos.add(engine.Vec4f.init(0, vertical * engine.deltaTimeSec, 0, 0));
+
+    trans = engine.Mat44f.identity();
+    trans.mul(engine.Mat44f.rotX(-orientation.x()));
+    trans.mul(engine.Mat44f.rotY(-orientation.y()));
+
+    // trans.mul(viewMat);
+    trans.translate(cameraPos.neg());
     viewMat = trans;
 
     //trans.translate(viewMat.forward().scaleDup(10));
@@ -161,51 +185,71 @@ pub fn update() bool {
         engine.render.useSingleBB = false;
     }
 
-    cameraPos.add(posOffset);
     meshMaterial.viewPos = cameraPos;
-    var rotmat = engine.Mat44f.rotY(rot);
-
-    meshMaterial.lightDirection = rotmat.mul33_vec4(meshMaterial.lightDirection);
+    var rotmat = engine.Mat44f.rotY(rot * engine.deltaTimeSec);
+    lightDir = rotmat.mul33_vec4(lightDir).normalized3();
+    meshMaterial.lightDirection = lightDir.neg();
     //modelMat.mul(rotmat);
 
     _ = engine.sys.showMouseCursor(~input.getMouseRight());
     _ = engine.sys.setRelativeMouseMode(input.getMouseRight());
+    _ = engine.sys.setCaptureMouse(input.getMouseRight());
+
+    // engine.render.drawTerrain(&terrain, &modelMat, &viewMat, &projMat, &meshMaterial);
 
     // var srenderDraw = engine.Sampler.begin(&engine.profiler,"draw.mesh");
     // defer srenderDraw.end();
-
-    if (!input.isKeyDown(input.KeyCode.SPACE)) {
-        // if(renderSingleFrame)
-        //     render3d = false;
-
-        // const renderStart = frameTimer.read();
-        // renderTimer.reset();
-        engine.render.drawMesh(&modelMat, &viewMat, &projMat, &mesh, &meshMaterial) catch {};
-        // engine.render.drawMesh(&modelMat, &viewMat, &projMat, &mesh, &meshMaterial);
-        // engine.render.drawMesh(&modelMat, &viewMat, &projMat, &mesh, &meshMaterial);
-        // engine.render.drawMesh(&modelMat, &viewMat, &projMat, &mesh, &meshMaterial);
-        // engine.render.drawMesh(&modelMat, &viewMat, &projMat, &mesh, &meshMaterial);
-        // engine.render.drawMesh(&modelMat, &viewMat, &projMat, &mesh, &meshMaterial);
-        // engine.render.drawMesh(&modelMat, &viewMat, &projMat, &mesh, &meshMaterial);
-
-        //engine.render.drawString(&font, "Hello World!", 10, 10, engine.Vec4f.one());
+    engine.render.drawMesh(&modelMat, &viewMat, &projMat, &mesh, &meshMaterial) catch {};
+    if (input.isKeyDown(input.KeyCode.SPACE)) {
+        drawAxis(trans);
     }
 
     return true;
+}
+
+fn drawAxis(mat: engine.Mat44f) void {
+    const lineMat = projMat.mulDup(viewMat);
+
+    // engine.render.drawPoint(
+    //     &lineMat,
+    //     engine.Vec4f.forward().scaleDup(1),
+    //     engine.Color.blue().toNormalVec4f(),
+    // );
+
+    engine.render.drawWorldLine(
+        &lineMat,
+        engine.Vec4f.zero(),
+        mat.forward().scaleDup(1),
+        engine.Color.blue().toNormalVec4f(),
+    );
+
+    engine.render.drawWorldLine(
+        &lineMat,
+        engine.Vec4f.zero(),
+        mat.up().scaleDup(1),
+        engine.Color.green().toNormalVec4f(),
+    );
+
+    engine.render.drawWorldLine(
+        &lineMat,
+        engine.Vec4f.zero(),
+        mat.right().scaleDup(1),
+        engine.Color.red().toNormalVec4f(),
+    );
 }
 
 fn projectVertex(p: *const engine.Mat44f, v: engine.Vec4f, viewport: engine.Vec4f, material: *engine.render.Material) engine.Vec4f {
     const zone = trace(@src());
     defer zone.end();
 
-    var out = p.mul33_divW_vec4(v);
+    const out = p.mul_vec4(v);
 
-    const half = viewport.scaleDup(0.5);
+    // const half = viewport.scaleDup(0.5);
     _ = material;
-    // _ = viewport;
-    // center in viewport
-    out.setX((half.x() * out.x()) + half.x());
-    out.setY((half.y() * -out.y() + half.y()));
+    _ = viewport;
+    // // center in viewport
+    // out.setX((half.x() * out.x()) + half.x());
+    // out.setY((half.y() * -out.y() + half.y()));
     return out;
 }
 
@@ -215,7 +259,7 @@ fn projectVertexNoDiv(
     viewport: engine.Vec4f,
     material: *engine.render.Material,
 ) engine.Vec4f {
-    var out = p.mul_vec4(v);
+    const out = p.mul_vec4(v);
     // if (v.w() != 0.0)
     //     out.div(v.w());
 
@@ -298,7 +342,7 @@ fn shader_unlit_colors_frag(
     _ = material;
     _ = normal;
 
-    var c = color;
+    const c = color;
     return c;
 }
 
@@ -376,8 +420,8 @@ fn schlickFresnel(vDotH: f32, albedo: engine.Vec4f, metal: f32) engine.Vec4f {
 
 fn schlickFresnel2(vDotH: f32, baseReflectivity: engine.Vec4f) engine.Vec4f {
     const halfV = 1.0 - vDotH; // std.math.clamp(1.0 - vDotH, 0.0, 1.0);
-    const halfVPow = std.math.pow(f32, halfV, 5);
-    // const halfVPow = halfV * halfV * halfV * halfV * halfV;
+    //const halfVPow = std.math.pow(f32, halfV, 5);
+    const halfVPow = halfV * halfV * halfV * halfV * halfV;
 
     const df = engine.Vec4f.one().subDup(baseReflectivity).scaleDup(halfVPow);
     const ret = baseReflectivity.addDup(df);
@@ -412,7 +456,7 @@ fn CalcPBRLighting(
 ) engine.Vec4f {
     _ = mv;
     _ = m;
-    var LightIntensity = material.lightColor.scaleDup(material.lightIntensity);
+    const LightIntensity = material.lightColor.scaleDup(material.lightIntensity);
 
     // var l = Vec4f.zero();
 
@@ -452,7 +496,7 @@ fn CalcPBRLighting(
     specular.div(4.0 * nDotV * nDotL + 1);
 
     const light = kD.mulDup(c).divDup(PI)
-        .addDup(specular)
+    // .addDup(specular.scaleDup(0.000001))
         .mulDup(LightIntensity)
         .scaleDup(nDotL);
 
@@ -486,19 +530,71 @@ fn shader_lit_pbr_texture0_frag(
     material: *engine.render.Material,
 ) engine.Vec4f {
     _ = mvp;
+    _ = mv;
+    _ = m;
     _ = pixel;
 
     //const n = normal.normalized();
 
-    var totalLight = CalcPBRLighting(
-        m,
-        mv,
-        normal,
-        pixelLocal,
-        uv,
-        color,
-        material,
-    );
+    // var totalLight = CalcPBRLighting(
+    //     m,
+    //     mv,
+    //     normal,
+    //     pixelLocal,
+    //     uv,
+    //     color,
+    //     material,
+    // );
+
+    const LightIntensity = material.lightColor.scaleDup(material.lightIntensity);
+
+    // var l = Vec4f.zero();
+
+    // if (IsDirLight) {
+    const l = material.lightDirection;
+    // } else {
+    //     l = PosDir - LocalPos0;
+    //     const LightToPixelDist = l.length();
+    //    l.normaize();
+    //     LightIntensity /= (LightToPixelDist * LightToPixelDist);
+    // }
+
+    const n = normal;
+    const v = material.viewPos.subDup(pixelLocal).normalized3();
+    const h = v.addDup(l).normalized3();
+
+    const nDotH = @max(n.dot3(h), 0.0000001);
+    const vDotH = @max(h.dot3(v), 0.0000001);
+    const nDotL = @max(l.dot3(n), 0.0);
+    const nDotV = @max(n.dot3(v), 0.0);
+
+    //_ = uv;
+    var c = material.texture.sample(uv.x(), uv.y());
+    c.lerp(color, 0.5); // add vertex color
+    c.setW(1.0);
+
+    var baseReflectivity = engine.Vec4f.splat3(0.04, 1);
+    baseReflectivity.lerp(c, material.metal);
+
+    const F = schlickFresnel2(vDotH, baseReflectivity);
+
+    const kD = engine.Vec4f.one().subDup(F).scaleDup(1.0 - material.metal);
+
+    const G = geomSmith(nDotV, nDotL, material.roughness);
+    const D = ggxDistribution(nDotH, material.roughness);
+
+    var specular = F.scaleDup(D * G);
+    specular.div(4.0 * nDotV * nDotL + 1);
+
+    const light = kD.mulDup(c).divDup(PI)
+        .addDup(specular)
+        .mulDup(LightIntensity)
+        .scaleDup(nDotL);
+
+    const ambient = engine.Vec4f.splat3(0.03, 1.0).mulDup(c); // * ao
+    var totalLight = ambient.addDup(light);
+
+    ////////
 
     // for (int i = 0 ;i < gNumPointLights ;i++) {
     //     totalLight += CalcPBRPointLight(gPointLights[i], normal);

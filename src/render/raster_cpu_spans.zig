@@ -8,6 +8,7 @@ const tracy = @import("../tracy.zig");
 const trace = tracy.trace;
 
 const core = @import("../core/core.zig");
+const interp = @import("../core/interp.zig");
 
 const Vec4f = core.vector.Vec4f;
 const Vec4i = core.vector.Vec4i;
@@ -19,6 +20,7 @@ const Profile = core.Profile;
 pub const Font = @import("font.zig").Font;
 pub const Mesh = @import("mesh.zig").Mesh;
 pub const Material = @import("material.zig").Material;
+pub const Terrain = @import("terrain.zig").Terrain;
 
 pub const PixelBuffer = @import("pixel_buffer.zig").PixelBuffer;
 pub const PixelRenderer = @import("pixel_buffer.zig").PixelRenderer;
@@ -147,6 +149,7 @@ pub const MeshRasterData = struct {
 };
 
 pub const TriRasterData = struct {
+    const Self = @This();
     pub const Visible = 1 << 0;
     pub const TooSmall = 1 << 1;
 
@@ -167,6 +170,7 @@ pub const TriRasterData = struct {
     // transformed and projected verticies
     clipVertex: [3]Vec4f = undefined, // Projection * Model * View
     screenVertex: [3]Vec4f = undefined, // Projection * Model * View / w
+    screenTriBary: [4]Vec4f = undefined, // Projection * Model * View / w
     cameraVertex: [3]Vec4f = undefined, // Model * View
     worldVertex: [3]Vec4f = undefined, // Model
 
@@ -177,9 +181,25 @@ pub const TriRasterData = struct {
     backfacing: bool = false,
 
     screenBounds: Bounds = undefined,
-    ySortedIndex: [3]usize = undefined,
+    // ySortedIndex: [3]usize = undefined,
 
     pixelsFilled: usize = 0,
+
+    clipCount: usize = 0,
+
+    pub fn calcScreenBounds(self: *Self) void {
+        self.screenArea = Vec4f.triArea(self.screenVertex[0], self.screenVertex[1], self.screenVertex[2]);
+        self.screenBounds = Bounds.init(self.screenVertex[0], self.screenVertex[0]);
+
+        inline for (1..3) |tp| {
+            self.screenBounds.add(self.screenVertex[tp]);
+        }
+    }
+
+    pub fn limitSreenBounds(self: *Self, other: Bounds) void {
+        self.screenBounds.limit(other);
+        self.screenBounds.topLeftHandLimit();
+    }
 };
 
 const TriSpanData = struct {
@@ -285,6 +305,8 @@ var colorRenderer: PixelRenderer(Color) = undefined;
 var triQueue: std.MultiArrayList(TriRasterData) = undefined;
 pub var viewFrustum: Frustum = Frustum{};
 
+pub var viewConfig: Vec4f = Vec4f.init(0.1, 1000, 90, 0);
+
 pub fn frameStats() Stats {
     return stats;
 }
@@ -293,6 +315,19 @@ pub fn drawLine(xFrom: i32, yFrom: i32, xTo: i32, yTo: i32, color: Color) void {
     const zone = trace(@src());
     defer zone.end();
     colorRenderer.drawLine(xFrom, yFrom, xTo, yTo, color);
+}
+
+pub fn drawLineTri(tri: *TriRasterData, color: Color) void {
+    const zone = trace(@src());
+    defer zone.end();
+
+    const t0 = core.vector.Vec4fToVec4i(tri.screenVertex[0]);
+    const t1 = core.vector.Vec4fToVec4i(tri.screenVertex[1]);
+    const t2 = core.vector.Vec4fToVec4i(tri.screenVertex[2]);
+
+    colorRenderer.drawLine(t0.x(), t0.y(), t1.x(), t1.y(), color);
+    colorRenderer.drawLine(t1.x(), t1.y(), t2.x(), t2.y(), color);
+    colorRenderer.drawLine(t2.x(), t2.y(), t0.x(), t0.y(), color);
 }
 
 pub fn bufferStart() *u8 {
@@ -331,8 +366,16 @@ pub fn init(renderWidth: u16, renderHeight: u16, alloc: *std.mem.Allocator, prof
 
     colorRenderer = PixelRenderer(Color).init(&colorBuffer[currentBuffer]);
 
-    viewport = Vec4f.init(@as(f32, @floatFromInt(colorBuffer[0].w)), @as(f32, @floatFromInt(colorBuffer[0].h)), 0, 0);
-    renderBounds = Bounds.init(Vec4f.zero(), viewport);
+    viewport = Vec4f.init(
+        @as(f32, @floatFromInt(colorBuffer[0].w)),
+        @as(f32, @floatFromInt(colorBuffer[0].h)),
+        0,
+        0,
+    );
+    renderBounds = Bounds.init(
+        Vec4f.zero(),
+        viewport.subDup(Vec4f.init(1, 1, 0, 0)),
+    );
 }
 
 pub fn shutdown() void {
@@ -348,7 +391,7 @@ pub fn beginFrame(profiler: ?*Profile) *u8 {
     defer zone.end();
 
     profile = profiler;
-    var pprof = profile.?.beginSample("render.beginFrame");
+    const pprof = profile.?.beginSample("render.beginFrame", 0);
     defer profile.?.endSample(pprof);
 
     stats.reset();
@@ -381,6 +424,9 @@ fn renderTris() void {
 
         var tri = triQueue.get(next);
 
+        if (!clipTri(&tri)) {
+            continue;
+        }
         //shadeTriSpan(&tri);
         // shadeTriBB(&tri, tri.screenBounds);
         shadeTriBB(&tri, tri.screenBounds);
@@ -399,8 +445,10 @@ fn renderTrisSingle() void {
 
         var tri = triQueue.get(next);
 
-        //shadeTriSpan(&tri);
-        // shadeTriBB(&tri, tri.screenBounds);
+        if (!clipTri(&tri)) {
+            continue;
+        }
+
         shadeTriBBSingle(&tri, tri.screenBounds);
     }
 
@@ -473,7 +521,7 @@ pub fn drawMesh(m: *const Mat44f, v: *const Mat44f, p: *const Mat44f, mesh: *Mes
     // drawWorldLine(&mvp, Vec4f.zero(), Vec4f.up(), Color.green().toNormalVec4f(), shader);
     // drawWorldLine(&mvp, Vec4f.zero(), Vec4f.forward(), Color.blue().toNormalVec4f(), shader);
 
-    _ = @atomicRmw(u32, &stats.totalMeshes, .Add, 1, .SeqCst);
+    _ = @atomicRmw(u32, &stats.totalMeshes, .Add, 1, .seq_cst);
 
     // renderQueue.pending.lockForWrite();
     // defer renderQueue.pending.unlockForWrite();
@@ -485,7 +533,7 @@ pub fn drawMesh(m: *const Mat44f, v: *const Mat44f, p: *const Mat44f, mesh: *Mes
         .indicies = undefined,
     };
 
-    var pixelsFilled: usize = 0;
+    // var pixelsFilled: usize = 0;
     while (t < ids / 3) {
         defer t += 1;
         tri.pixelsFilled = 0;
@@ -497,11 +545,11 @@ pub fn drawMesh(m: *const Mat44f, v: *const Mat44f, p: *const Mat44f, mesh: *Mes
         }
 
         // if (tri.pixelsFilled > 0)
-        //     break;
+        // break;
     }
 
-    stats.renderedPixels += pixelsFilled;
-    _ = @atomicRmw(u32, &stats.renderedMeshes, .Add, 1, .SeqCst);
+    // stats.renderedPixels += pixelsFilled;
+    _ = @atomicRmw(u32, &stats.renderedMeshes, .Add, 1, .seq_cst);
 }
 
 inline fn applyPixelShader(mv: *const Mat44f, mvp: *const Mat44f, pixel: Vec4f, color: Vec4f, normal: Vec4f, uv: Vec4f, material: *Material) Vec4f {
@@ -538,27 +586,168 @@ inline fn applyPixelShader(mv: *const Mat44f, mvp: *const Mat44f, pixel: Vec4f, 
     //return c.scaleDup(l);
 }
 
-fn clipTri(tri: *TriRasterData) void {
-    inline for (0..3) |axis| {
-        tri.edge[0].setW(@floatFromInt(@intFromBool(std.math.signbit(tri.clipVertex[0].v[axis]))));
+const IntersectClipResult = struct {
+    v: Vec4f,
+    delta: f32,
+};
+
+fn intersectClipEdge(outPoint: Vec4f, inPoint: Vec4f, axis: usize) IntersectClipResult {
+    const w = outPoint.w();
+    // const aval = p.v[axis];
+    const dw = @abs(w - outPoint.v[axis]);
+
+    const toOut = outPoint.subDup(inPoint);
+
+    const total = toOut.v[axis];
+    const delta = 1 - dw / total;
+
+    // point along this edge that lies on boundary
+    const offset = toOut.scaleDup(delta);
+
+    var np = inPoint.addDup(offset);
+    np.v[axis] = w;
+
+    return .{ .v = np, .delta = delta };
+}
+
+fn addClippedTri(tri: *const TriRasterData, v0: Vec4f, v1: Vec4f, v2: Vec4f) void {
+    var tri1 = tri.*;
+    tri1.clipCount += 1;
+
+    tri1.cameraVertex[0] = v0;
+    tri1.cameraVertex[1] = v1;
+    tri1.cameraVertex[2] = v2;
+
+    const shader = tri1.meshData.shader;
+    inline for (0..3) |i| {
+        tri1.cameraVertex[i].setW(1);
+        tri1.clipVertex[i] = shader.projectionShader(
+            tri1.meshData.proj,
+            tri1.cameraVertex[i],
+            viewport,
+            shader,
+        );
+
+        const clipV = tri1.clipVertex[i];
+        tri1.screenVertex[i] = clipV.divDup(clipV.w());
+
+        const half = viewport.scaleDup(0.5);
+        const out = tri1.screenVertex[i];
+        tri1.screenVertex[i].setX(half.x() * out.x() + half.x());
+        tri1.screenVertex[i].setY(half.y() * -out.y() + half.y());
     }
+
+    tri1.calcScreenBounds();
+    tri1.limitSreenBounds(renderBounds);
+
+    // TODO: interpolate all values
+    triQueue.appendAssumeCapacity(tri1);
+}
+
+fn clipTri(tri: *TriRasterData) bool {
+    var srt = core.profiler.Sampler.initAndBegin(profile.?, @src().fn_name, 2);
+    defer srt.end();
+
+    var totalOutside: usize = 0;
+
+    if (tri.clipCount > 0)
+        return true;
+
+    var clipped = [3]Vec4f{
+        tri.cameraVertex[0], //.divDup(tri.clipVertex[0].w()),
+        tri.cameraVertex[1], //.divDup(tri.clipVertex[1].w()),
+        tri.cameraVertex[2], //.divDup(tri.clipVertex[2].w()),
+    };
+
+    const nearZ = -viewConfig.x();
+    // inline for (0..3) |axis| {
+    const axis = 2; // z only
+    inline for (0..3) |v| {
+        const inside = clipped[v].v[axis] <= nearZ;
+        tri.edges[v].setW(@floatFromInt(@intFromBool(inside)));
+        totalOutside += @intFromBool(!inside);
+    }
+
+    if (totalOutside == 0)
+        return true;
+
+    // all points outside of a single plane?
+    if (totalOutside == 3)
+        return false;
+
+    inline for (0..3) |v| {
+        clipped[v].setW(nearZ);
+    }
+
+    const nextIndex = .{ 1, 2, 0 };
+    const prevIndex = .{ 2, 0, 1 };
+
+    inline for (0..3) |v| {
+        const next = nextIndex[v];
+        const prev = prevIndex[v];
+
+        const p = clipped[v];
+
+        if (tri.edges[v].w() > 0) {
+            // point along this edge that lies on boundary
+
+            const np = clipped[next];
+            const pp = clipped[prev];
+
+            const nextOutside = (np.v[axis]) > nearZ;
+            const prevOutside = (pp.v[axis]) > nearZ;
+
+            const npi = intersectClipEdge(np, p, axis);
+            const ppi = intersectClipEdge(pp, p, axis);
+
+            if (nextOutside and prevOutside) {
+                // both out side, just need to make one tri
+                // TODO: need to check winding order
+                addClippedTri(tri, npi.v, ppi.v, p);
+                return false;
+            }
+
+            // only one outside
+            // need to make two new tris
+
+            if (nextOutside) {
+                const out2pi = intersectClipEdge(np, pp, axis);
+
+                addClippedTri(tri, p, npi.v, pp);
+                addClippedTri(tri, npi.v, out2pi.v, pp);
+            } else {
+                const out2pi = intersectClipEdge(pp, np, axis);
+
+                addClippedTri(tri, p, np, ppi.v);
+                addClippedTri(tri, ppi.v, np, out2pi.v);
+            }
+
+            return false;
+        }
+    }
+    // }
+
+    return true;
 }
 
 fn drawTriJob(triJob: *TriRasterData) bool {
     const zone = trace(@src());
     defer zone.end();
 
+    var srt = core.profiler.Sampler.initAndBegin(profile.?, @src().fn_name, 1);
+    defer srt.end();
+
     var tri = triJob;
     const data = tri.meshData;
     const mesh = data.mesh;
     const shader = data.shader;
 
-    _ = @atomicRmw(u32, &stats.totalTris, .Add, 1, .SeqCst);
+    _ = @atomicRmw(u32, &stats.totalTris, .Add, 1, .seq_cst);
 
-    comptime var p = 0;
-    var insideCount: i32 = 0;
-    inline while (p < 3) {
-        var offset = tri.offset + p;
+    inline for (0..3) |p| {
+        var offset: u16 = @intCast(p);
+        offset += tri.offset;
+
         assert(offset < mesh.indexBuffer.len);
         tri.indicies[p] = mesh.indexBuffer[offset];
         tri.rawVertex[p] = mesh.vertexBuffer[tri.indicies[p]];
@@ -575,17 +764,27 @@ fn drawTriJob(triJob: *TriRasterData) bool {
             0,
         );
 
+        const n = tri.clipVertex[p].maxElement();
+        if (std.math.isInf(n) or std.math.isNan(n)) {
+            var a = tri.clipVertex[p];
+            _ = a.addDup(a);
+        }
+
         const w = tri.clipVertex[p].w();
 
-        const inside = tri.clipVertex[p].abs().maxElement() <= w;
-        insideCount += @intFromBool(inside);
+        // tri.clipVertex[p].abs().
+
+        // const inside = tri.clipVertex[p].abs().maxElement() <= std.math.fabs(w);
+
+        // insideCount += @intFromBool(inside);
 
         if (w != 0.0) {
             tri.uv[p].div(w);
-            //tri.screenVertex[p].divVec(Vec4f.init(1.0, 1.0, w, 1.0));
+            tri.worldNormals[p].div(w);
+            tri.color[p].div(w);
             tri.screenVertex[p] = tri.clipVertex[p].divDup(w);
-            //tri.worldNormals[p].div(w);
-            tri.uv[p].setW(1.0 / w);
+            tri.edges[p] = tri.clipVertex[p].divDup(w);
+            tri.uv[p].setW(1 / w);
         }
 
         const half = viewport.scaleDup(0.5);
@@ -606,67 +805,77 @@ fn drawTriJob(triJob: *TriRasterData) bool {
         tri.color[p] = mesh.colorBuffer[tri.indicies[p]];
 
         // tri.color[p].setX(tri.color[p].x() + @as(f32, @floatFromInt(1 - inside)));
-        p += 1;
     }
 
     // frustum cull
-    if (insideCount < 3) {
+    // if (insideCount == 0) {
+    //     return false;
+    // }
+    tri.normal = getTriangleNormal(tri.cameraVertex);
+    tri.backfacing = shader.backfaceCull and tri.cameraVertex[0].normalized3().dot3(tri.normal) > 0.0000000000001;
+
+    if (tri.backfacing) {
+        _ = @atomicRmw(u32, &stats.trisBackfacing, .Add, 1, .seq_cst);
         return false;
     }
+
+    // inline for (0..3) |axis| {
+    //     var insideCount: usize = 0;
+    //     inline for (0..3) |v| {
+    //         insideCount += @intFromBool(std.math.fabs(tri.clipVertex[v].v[axis]) <= tri.clipVertex[v].w());
+    //     }
+
+    //     // frustum culling
+    //     if (insideCount == 0)
+    //         return false;
+    // }
 
     tri.edges[0] = (tri.clipVertex[1].subDup(tri.clipVertex[0]));
     tri.edges[1] = (tri.clipVertex[2].subDup(tri.clipVertex[1]));
     tri.edges[2] = (tri.clipVertex[0].subDup(tri.clipVertex[2]));
 
-    tri.normal = getTriangleNormal(tri.cameraVertex);
-    tri.backfacing = shader.backfaceCull and tri.cameraVertex[0].normalized3().dot3(tri.normal) > 0.0000000000001;
-    tri.screenArea = Vec4f.triArea(tri.screenVertex[0], tri.screenVertex[1], tri.screenVertex[2]);
-    tri.screenBounds = Bounds.init(tri.screenVertex[0], tri.screenVertex[0]);
-
-    if (tri.backfacing) {
-        _ = @atomicRmw(u32, &stats.trisBackfacing, .Add, 1, .SeqCst);
-        return false;
+    inline for (0..4) |i| {
+        tri.screenTriBary[i] = Vec4f.init(
+            tri.screenVertex[0].v[i],
+            tri.screenVertex[1].v[i],
+            tri.screenVertex[2].v[i],
+            0,
+        );
     }
 
-    p = 1;
-    inline while (p < 3) {
-        tri.screenBounds.add(tri.screenVertex[p]);
-        p += 1;
-    }
+    tri.calcScreenBounds();
 
     // if (std.math.isInf(tri.screenBounds.min.maxElement()) or std.math.isInf(tri.screenBounds.max.maxElement())) {
     //     return false;
     // }
 
     // // Too small to see
-    if (tri.screenArea <= 0) {
-        _ = @atomicRmw(u32, &stats.trisTooSmall, .Add, 1, .SeqCst);
+    if (@abs(tri.screenArea) <= 0) {
+        _ = @atomicRmw(u32, &stats.trisTooSmall, .Add, 1, .seq_cst);
         return false;
     }
 
-    const rb = renderBounds;
-    tri.screenBounds.limit(rb);
-    tri.screenBounds.topLeftHandLimit();
+    tri.limitSreenBounds(renderBounds);
 
-    tri.ySortedIndex = .{ 0, 1, 2 };
+    // tri.ySortedIndex = .{ 0, 1, 2 };
 
-    var t0 = tri.screenVertex[0];
-    var t1 = tri.screenVertex[1];
-    var t2 = tri.screenVertex[2];
+    // var t0 = tri.screenVertex[0];
+    // var t1 = tri.screenVertex[1];
+    // var t2 = tri.screenVertex[2];
 
-    // sort by y value
-    if (t0.y() > t1.y()) {
-        std.mem.swap(Vec4f, &t0, &t1);
-        std.mem.swap(usize, &tri.ySortedIndex[0], &tri.ySortedIndex[1]);
-    }
-    if (t0.y() > t2.y()) {
-        std.mem.swap(Vec4f, &t0, &t2);
-        std.mem.swap(usize, &tri.ySortedIndex[0], &tri.ySortedIndex[2]);
-    }
-    if (t1.y() > t2.y()) {
-        std.mem.swap(Vec4f, &t1, &t2);
-        std.mem.swap(usize, &tri.ySortedIndex[1], &tri.ySortedIndex[2]);
-    }
+    // // sort by y value
+    // if (t0.y() > t1.y()) {
+    //     std.mem.swap(Vec4f, &t0, &t1);
+    //     std.mem.swap(usize, &tri.ySortedIndex[0], &tri.ySortedIndex[1]);
+    // }
+    // if (t0.y() > t2.y()) {
+    //     std.mem.swap(Vec4f, &t0, &t2);
+    //     std.mem.swap(usize, &tri.ySortedIndex[0], &tri.ySortedIndex[2]);
+    // }
+    // if (t1.y() > t2.y()) {
+    //     std.mem.swap(Vec4f, &t1, &t2);
+    //     std.mem.swap(usize, &tri.ySortedIndex[1], &tri.ySortedIndex[2]);
+    // }
 
     // drawWorldLine(&data.mvp, tri.worldVertex[0], tri.worldVertex[1], tri.color[0], shader);
     // drawWorldLine(&data.mvp, tri.worldVertex[1], tri.worldVertex[2], tri.color[1], shader);
@@ -680,179 +889,18 @@ fn drawTriJob(triJob: *TriRasterData) bool {
 
     // // math.max(math.max(v[0].y(), v[1].y()), v[2].y());
 
-    _ = @atomicRmw(u32, &stats.renderedTris, .Add, 1, .SeqCst);
+    _ = @atomicRmw(u32, &stats.renderedTris, .Add, 1, .seq_cst);
 
     return true;
 }
 
-fn shadeTriSpan(triData: *TriRasterData) void {
-    // const zone = trace(@src());
-    // defer zone.end();
-
-    var t0 = triData.screenVertex[triData.ySortedIndex[0]];
-    var t1 = triData.screenVertex[triData.ySortedIndex[1]];
-    var t2 = triData.screenVertex[triData.ySortedIndex[2]];
-
-    const width: f32 = @floatFromInt(colorBuffer[currentBuffer].w);
-    const height: f32 = @floatFromInt(colorBuffer[currentBuffer].h);
-
-    var totalHeight = std.math.clamp(t2.y() - t0.y(), 0, height);
-
-    if (totalHeight <= 0)
-        return;
-
-    var uv0 = triData.uv[triData.ySortedIndex[0]];
-    var uv1 = triData.uv[triData.ySortedIndex[1]];
-    var uv2 = triData.uv[triData.ySortedIndex[2]];
-
-    var vn0 = triData.worldNormals[triData.ySortedIndex[0]];
-    var vn1 = triData.worldNormals[triData.ySortedIndex[1]];
-    var vn2 = triData.worldNormals[triData.ySortedIndex[2]];
-
-    var vc0 = triData.color[triData.ySortedIndex[0]];
-    var vc1 = triData.color[triData.ySortedIndex[1]];
-    var vc2 = triData.color[triData.ySortedIndex[2]];
-
-    const dy1 = @fabs(t1.y() - t0.y());
-    const dy2 = @fabs(t2.y() - t1.y());
-    const flatTop = t1.y() == t0.y();
-    const shader = triData.meshData.shader;
-
-    var x: f32 = t0.x();
-    var y: f32 = t0.y();
-    var z: f32 = t0.z();
-
-    while (y <= t2.y()) {
-        defer y += 1;
-
-        const zone2 = trace(@src());
-        defer zone2.end();
-
-        const starty = y - t0.y();
-
-        const second_half = starty > dy1 or flatTop;
-        const segment_height = @fabs(if (second_half) dy2 else dy1);
-
-        const alpha = starty / totalHeight;
-        const beta = (starty - (if (second_half) dy1 else 0)) / segment_height;
-
-        // screen position
-        var A = t0.addDup(t2.subDup(t0).scaleDup(alpha));
-        var B = if (second_half)
-            t1.addDup(t2.subDup(t1).scaleDup(beta))
-        else
-            t0.addDup(t1.subDup(t0).scaleDup(beta));
-
-        // texture coords
-        var U = uv0.addDup(uv2.subDup(uv0).scaleDup(alpha));
-        var V = if (second_half)
-            uv1.addDup(uv2.subDup(uv1).scaleDup(beta))
-        else
-            uv0.addDup(uv1.subDup(uv0).scaleDup(beta));
-
-        // vertex normals
-        var VA = vn0.addDup(vn2.subDup(vn0).scaleDup(alpha));
-        var VB = if (second_half)
-            vn1.addDup(vn2.subDup(vn1).scaleDup(beta))
-        else
-            vn0.addDup(vn1.subDup(vn0).scaleDup(beta));
-
-        // vertex colors
-        var CA = vc0.addDup(vc2.subDup(vc0).scaleDup(alpha));
-        var CB = if (second_half)
-            vc1.addDup(vc2.subDup(vc1).scaleDup(beta))
-        else
-            vc0.addDup(vc1.subDup(vc0).scaleDup(beta));
-
-        A.clampVec(
-            Vec4f.init(0.0, 0.0, A.z(), A.w()),
-            Vec4f.init(width - 1, height - 1, A.z(), A.w()),
-        );
-        B.clampVec(
-            Vec4f.init(0.0, 0.0, B.z(), B.w()),
-            Vec4f.init(width - 1, height - 1, B.z(), B.w()),
-        );
-
-        if (@fabs((A.x())) > @fabs((B.x()))) {
-            std.mem.swap(Vec4f, &A, &B);
-            std.mem.swap(Vec4f, &U, &V);
-            std.mem.swap(Vec4f, &VA, &VB);
-            std.mem.swap(Vec4f, &CA, &CB);
-        }
-
-        const ix: i32 = @intFromFloat(std.math.clamp(x, 0, width));
-        const iy: i32 = @intFromFloat(std.math.clamp(y, 0, height));
-
-        const ldiff = B.subDup(A);
-
-        const tstep: f32 = 1.0 / ldiff.x();
-        var t: f32 = 0;
-        const depthTest = shader.depthTest;
-
-        var dsx = depthBuffer[currentBuffer].pxIndex(ix, iy);
-        var csx = colorBuffer[currentBuffer].pxIndex(ix, iy);
-
-        x = A.x();
-        while (x <= B.x()) {
-            // const pixtracy = trace(@src());
-            // defer pixtracy.end();
-            // var pprof = profile.?.beginSample("render.mesh.draw.tri.pixel");
-            // defer profile.?.endSample(pprof);
-            //_ = @atomicRmw(u32, &stats.totalPixels, .Add, 1, .SeqCst);
-            defer x += 1;
-
-            const lerpZone = tracy.traceNamed(@src(), "lerpZone");
-
-            //const x = @as(i32, @intCast(j));
-            const uvs = U.lerpDup(V, t);
-            const pcuvs = uvs.divDup(uvs.w());
-            const vns = VA.lerpDup(VB, t);
-            const vc = CA.lerpDup(CB, t);
-            const p = A.lerpDup(B, t);
-
-            z = p.z();
-            lerpZone.end();
-
-            var write = true;
-            if (depthTest == 1) {
-                const depthZone = tracy.traceNamed(@src(), "depthTest");
-                defer depthZone.end();
-                const depth = depthBuffer[currentBuffer].readIndex(dsx);
-                write = std.math.isInf(depth) or depth < z;
-            }
-
-            if (write) {
-                const c = shader.pixelShader(
-                    &triData.meshData.mv,
-                    &triData.meshData.mvp,
-                    p,
-                    vc,
-                    vns,
-                    pcuvs,
-                    shader,
-                );
-                // const c = applyPixelShader(&triData.meshData.mv, &triData.meshData.mvp, p, vc, vns, pcuvs, shader);
-
-                triData.pixelsFilled += 1;
-                //writePixel(x, y, z, Color.fromNormalVec4f(c));
-
-                colorBuffer[currentBuffer].writeIndex(csx, Color.fromNormalVec4f(c));
-                depthBuffer[currentBuffer].writeIndex(dsx, z);
-            }
-            t += tstep;
-            dsx += 1;
-            csx += 1;
-        }
-    }
-}
-
 fn shadeTriBB(triData: *TriRasterData, bounds: Bounds) void {
     const size = bounds.size();
-    var b = bounds;
-    b.add(bounds.min.subDup(Vec4f.one()));
-    b.add(bounds.max.addDup(Vec4f.one()));
+    const b = bounds;
+    // b.add(bounds.min.subDup(Vec4f.one()));
+    // b.add(bounds.max.addDup(Vec4f.one()));
 
-    if (size.x() <= 10) {
+    if (size.x() < 50) {
         shadeTriBBSingle(triData, b);
         return;
     }
@@ -897,8 +945,44 @@ fn shadeTriBB(triData: *TriRasterData, bounds: Bounds) void {
     }
 }
 
+const BaryEdge = struct {
+    const Self = @This();
+    v: Vec4f,
+    nextX: Vec4f,
+    nextY: Vec4f,
+
+    pub fn init(v0: Vec4f, v1: Vec4f, start: Vec4f) Self {
+        const A: f32 = v0.y() - v1.y();
+        const B: f32 = v1.x() - v0.x();
+        const C: f32 = v0.x() * v1.y() - v0.y() * v1.x();
+
+        const stepX = Vec4f.splat(A * 1);
+        const stepY = Vec4f.splat(B * 1);
+
+        const x = Vec4f.splat(start.x()); // + other offsets
+        const y = Vec4f.splat(start.y());
+
+        const vA = Vec4f.splat(A);
+        const vB = Vec4f.splat(B);
+        const vC = Vec4f.splat(C);
+
+        var startBary = vA.mulDup(x);
+        startBary.add(vB.mulDup(y));
+        startBary.add(vC);
+
+        return .{
+            .v = startBary,
+            .nextX = stepX,
+            .nextY = stepY,
+        };
+    }
+};
+
 fn shadeTriBBSingle(triData: *TriRasterData, bounds: Bounds) void {
-    var y = bounds.min.y();
+    var srt = core.profiler.Sampler.initAndBegin(profile.?, @src().fn_name, 4);
+    defer srt.end();
+
+    var y = bounds.min.y() + 0.5;
     var p: Vec4f = Vec4f.init(0, 0, 0, 0);
     var pixelNormal: Vec4f = Vec4f.init(0, 0, 0, 0);
     var fbc: Vec4f = Vec4f.init(0, 0, 0, 1);
@@ -907,41 +991,86 @@ fn shadeTriBBSingle(triData: *TriRasterData, bounds: Bounds) void {
     // var c: Color = Color.black();
     const shader = triData.meshData.shader;
 
-    _ = @atomicRmw(u32, &stats.renderedTris, .Add, 1, .SeqCst);
+    _ = @atomicRmw(u32, &stats.renderedTris, .Add, 1, .seq_cst);
 
-    const minx: i32 = @intFromFloat(bounds.min.x());
-    const miny: i32 = @intFromFloat(bounds.min.y());
+    const minx: i32 = @intFromFloat(bounds.min.x() + 0.5);
+    const miny: i32 = @intFromFloat(bounds.min.y() + 0.5);
 
     var dsy = depthBuffer[currentBuffer].pxIndex(minx, miny);
     const width: usize = @intCast(colorBuffer[currentBuffer].w);
     const depthTest = shader.depthTest;
 
+    // inline for (0..3) |i| {
+    //     const pix = triData.screenVertex[i];
+    //     const pixx: i32 = @intFromFloat(pix.x());
+    //     const pixy: i32 = @intFromFloat(pix.y());
+    //     writePixel(pixx, pixy, pix.z(), Color.fromNormalVec4f(triData.color[i]));
+    // }
+
+    const baryStart = Vec4f.triBarycentericCoordsOld(
+        triData.screenVertex[0],
+        triData.screenVertex[1],
+        triData.screenVertex[2],
+        bounds.min.addScalarDup(0.5),
+    );
+
+    // const edge12 = BaryEdge.init(triData.screenVertex[1], triData.screenVertex[2], bounds.min);
+    // const edge20 = BaryEdge.init(triData.screenVertex[2], triData.screenVertex[0], bounds.min);
+    // const edge01 = BaryEdge.init(triData.screenVertex[0], triData.screenVertex[1], bounds.min);
+
+    // const edges = [3]BaryEdge{ edge12, edge20, edge01 };
+    // var wrow = [3]Vec4f{ edge12.v, edge20.v, edge01.v };
+
+    var baryRow = baryStart;
+    const baryStepX = Vec4f.init(
+        triData.screenVertex[2].y() - triData.screenVertex[1].y(),
+        triData.screenVertex[0].y() - triData.screenVertex[2].y(),
+        triData.screenVertex[1].y() - triData.screenVertex[0].y(),
+        1,
+    );
+    const baryStepY = Vec4f.init(
+        triData.screenVertex[1].x() - triData.screenVertex[2].x(),
+        triData.screenVertex[2].x() - triData.screenVertex[0].x(),
+        triData.screenVertex[0].x() - triData.screenVertex[1].x(),
+        1,
+    );
+    // var minBary = Vec4f.triBarycentericCoordsOld(triData.screenVertex[0], triData.screenVertex[1], triData.screenVertex[2], bounds.min);
+
     while (y <= bounds.max.y()) {
         var x = bounds.min.x();
         defer y += 1;
         defer dsy += width;
+        defer baryRow.add(baryStepY);
 
         var dsx = dsy;
+
+        var wspan = baryRow;
+
         while (x <= bounds.max.x()) {
+            // var sprt = core.profiler.Sampler.initAndBegin(profile.?, @src().fn_name, 2);
+            // defer sprt.end();
+
             // const pixtracy = trace(@src());
             // defer pixtracy.end();
             // var pprof = profile.?.beginSample("render.mesh.draw.tri.pixel");
             // defer profile.?.endSample(pprof);
-            //_ = @atomicRmw(u32, &stats.totalPixels, .Add, 1, .SeqCst);
+            //_ = @atomicRmw(u32, &stats.totalPixels, .Add, 1, .seq_cst);
             defer dsx += 1;
             defer x += 1;
+            defer wspan.add(baryStepX);
 
             p.setX(x);
             p.setY(y);
 
-            var triBary = Vec4f.triBarycentericCoordsOld(triData.screenVertex[0], triData.screenVertex[1], triData.screenVertex[2], p);
+            var triBary = wspan;
 
             const minBary = triBary.minElement();
-            if (std.math.signbit(minBary) or !std.math.isFinite(minBary))
+            const outsideTri = std.math.signbit(minBary) or !std.math.isFinite(minBary);
+
+            if (outsideTri) // and (triData.clipCount == 0 or (x != bounds.max.x() and x != bounds.min.x() and y != bounds.max.y() and y != bounds.min.y())))
                 continue;
 
             triBary.div(triData.screenArea);
-            triBary.setW(1.0);
 
             const z = (triBary.x() * triData.screenVertex[0].z() +
                 triBary.y() * triData.screenVertex[1].z() +
@@ -949,43 +1078,39 @@ fn shadeTriBBSingle(triData: *TriRasterData, bounds: Bounds) void {
 
             p.setZ(z);
 
-            const pt = triBary.triInterpArray(triData.screenVertex, 1.0, 1.0);
-
-            var write = true;
+            var write = outsideTri;
             if (depthTest == 1) {
-                // const depthZone = tracy.traceNamed(@src(), "depthTest");
-                // defer depthZone.end();
                 const depth = depthBuffer[currentBuffer].readIndex(dsx);
                 write = std.math.isInf(depth) or depth > z;
             }
 
             if (write) {
-                // interpolate vertex colors across all pixels
-                fbc = triBary.triInterpArray(triData.color, 1.0, 1.0);
-                fbc.div(uv.w());
-                pixelNormal = triBary.triInterpArray(triData.worldNormals, 1.0, 1.0);
-                pixelNormal.div(uv.w());
-                uv = triBary.triInterpArray(triData.uv, 1.0, 1.0);
-                uv.div(uv.w());
 
-                var pl = triBary.triInterpArray(triData.worldVertex, 1.0, 1.0);
-                pl.div(uv.w());
+                // interpolate vertex colors across all pixels
+                uv = triBary.triInterpArray(triData.uv, 0);
+                const w = 1 / uv.w();
+
+                fbc = triBary.triInterpArray(triData.color, 1);
+                pixelNormal = triBary.triInterpArrayScale(triData.worldNormals, 0, w);
+
+                const pl = triBary.triInterpArray(triData.worldVertex, 1);
 
                 const vc = shader.pixelShader(
                     triData.meshData.model,
                     &triData.meshData.mv,
                     &triData.meshData.mvp,
-                    pt,
+                    p,
                     pl, //triData.worldNormals[0],
                     fbc,
                     pixelNormal,
-                    uv,
+                    uv.scaleDup(w),
                     shader,
                 );
 
                 triData.pixelsFilled += 1;
 
-                colorBuffer[currentBuffer].writeIndex(dsx, Color.fromNormalVec4f(vc));
+                const fc = Color.fromNormalVec4f(vc);
+                colorBuffer[currentBuffer].writeIndex(dsx, fc);
                 depthBuffer[currentBuffer].writeIndex(dsx, z);
             }
         }
@@ -1026,7 +1151,7 @@ pub fn drawString(font: *Font, str: []const u8, x: i32, y: i32, color: Vec4f) vo
 
         // TODO: copy lines rather than sample directly?
 
-        var starty = y + lines * font.glyphHeight + 2;
+        const starty = y + lines * font.glyphHeight + 2;
 
         var coy: i32 = 0;
         while (coy < font.glyphHeight) {
@@ -1049,29 +1174,57 @@ pub fn drawString(font: *Font, str: []const u8, x: i32, y: i32, color: Vec4f) vo
 }
 
 //
-pub fn drawPoint(mvp: *const Mat44f, point: Vec4f, color: Vec4f, shader: *Material) void {
-    const px = shader.vertexShader(mvp, 0, point, shader);
-    const pc = color;
+// pub fn drawPoint(mvp: *const Mat44f, point: Vec4f, color: Vec4f, shader: *Material) void {
+//     const px = shader.vertexShader(mvp, 0, point, shader);
+//     const pc = color;
 
-    const c = Color.init(@as(u8, @intFromFloat(pc.x() * 255)), @as(u8, @intFromFloat(pc.y() * 255)), @as(u8, @intFromFloat(pc.z() * 255)), @as(u8, @intFromFloat(pc.w() * 255)));
+//     const c = Color.init(@as(u8, @intFromFloat(pc.x() * 255)), @as(u8, @intFromFloat(pc.y() * 255)), @as(u8, @intFromFloat(pc.z() * 255)), @as(u8, @intFromFloat(pc.w() * 255)));
 
-    if (px.x() >= 0 and px.x() <= 1000 and px.y() >= 0 and px.y() <= 1000)
-        writePixel(@as(i32, @intFromFloat(px.x())), @as(i32, @intFromFloat(px.y())), c);
+//     if (px.x() >= 0 and px.x() <= 1000 and px.y() >= 0 and px.y() <= 1000)
+//         writePixel(@as(i32, @intFromFloat(px.x())), @as(i32, @intFromFloat(px.y())), c);
+// }
+
+pub fn drawPoint(pv: *const Mat44f, point: Vec4f, color: Vec4f) void {
+    const spx = projectVertex(pv, point).clamped(renderBounds.min, renderBounds.max);
+    // const epx = projectVertex(pv, end).clamped(renderBounds.min, renderBounds.max);
+
+    writePixel(
+        @as(i32, @intFromFloat(spx.x())),
+        @as(i32, @intFromFloat(spx.y())),
+        1,
+        Color.fromNormalVec4f(color),
+    );
+}
+
+fn projectVertex(p: *const Mat44f, v: Vec4f) Vec4f {
+    const zone = trace(@src());
+    defer zone.end();
+
+    var vin = v;
+    vin.setW(1);
+
+    var out = p.mul_vec4(vin);
+    out.div(out.w());
+
+    const half = viewport.scaleDup(0.5);
+    // center in viewport
+    out.setX((half.x() * out.x()) + half.x());
+    out.setY((half.y() * -out.y() + half.y()));
+    return out;
 }
 
 ///
-pub fn drawWorldLine(mvp: *const Mat44f, start: Vec4f, end: Vec4f, color: Vec4f, shader: *Material) void {
-    const spx = shader.vertexShader(mvp, 0, start, shader);
-    const epx = shader.vertexShader(mvp, 0, end, shader);
-    // const pc = color;
+pub fn drawWorldLine(pv: *const Mat44f, start: Vec4f, end: Vec4f, color: Vec4f) void {
+    const spx = projectVertex(pv, start).clamped(renderBounds.min, renderBounds.max);
+    const epx = projectVertex(pv, end).clamped(renderBounds.min, renderBounds.max);
 
-    _ = color;
-    const c = Color.white(); //Color.init(@as(u8, @intFromFloat(pc.x() * 255)), @as(u8, @intFromFloat(pc.y() * 255)), @as(u8, @intFromFloat(pc.z() * 255)), @as(u8, @intFromFloat(pc.w() * 255)));
-    const screen = renderBounds.size();
-
-    if (spx.x() >= 0 and spx.x() < screen.x() and spx.y() >= 0 and spx.y() <= screen.x() and
-        epx.x() >= 0 and epx.x() < screen.x() and epx.y() >= 0 and epx.y() <= screen.x())
-        drawLine(@as(i32, @intFromFloat(spx.x())), @as(i32, @intFromFloat(spx.y())), @as(i32, @intFromFloat(epx.x())), @as(i32, @intFromFloat(epx.y())), c);
+    drawLine(
+        @as(i32, @intFromFloat(spx.x())),
+        @as(i32, @intFromFloat(spx.y())),
+        @as(i32, @intFromFloat(epx.x())),
+        @as(i32, @intFromFloat(epx.y())),
+        Color.fromNormalVec4f(color),
+    );
 }
 
 pub fn drawProgress(x: i16, y: i16, max_width: f32, value: f32, max_value: f32) void {
@@ -1088,4 +1241,139 @@ pub fn writePixelNormal(x: i32, y: i32, z: f32, c: Vec4f) void {
 pub fn writePixel(x: i32, y: i32, z: f32, c: Color) void {
     colorBuffer[currentBuffer].write(x, y, c);
     depthBuffer[currentBuffer].write(x, y, z);
+}
+
+pub fn drawTerrain(terrain: *Terrain, model: *const Mat44f, view: *const Mat44f, proj: *const Mat44f, shader: *Material) void {
+
+    // Model * View
+    var mv = view.*;
+    mv.mul(model.*);
+
+    // View * projection
+    var vp = proj.*;
+    vp.mul(view.*);
+
+    // Projection * Model * View
+    var mvp = proj.*;
+    mvp.mul(view.*);
+    mvp.mul(model.*);
+
+    // const size = terrain.bounds.size();
+    const scale = Vec4f.init(1, 100, 1, 1);
+
+    // const size = terrain.size;
+
+    // const sizex: usize = @intCast(size.x());
+    // const sizez: usize = 10; //@intCast(size.z());
+    // for (0..sizez) |vz| {
+    //     for (0..sizez) |vx| {
+    //         var vscreen: [4]Vec4f = undefined;
+    //         var v = [4]Vec4f{
+    //             terrain.vertexBuffer[(vz + 0) * sizex + (vx + 0)],
+    //             terrain.vertexBuffer[(vz + 1) * sizex + (vx + 0)],
+    //             terrain.vertexBuffer[(vz + 1) * sizex + (vx + 1)],
+    //             terrain.vertexBuffer[(vz + 0) * sizex + (vx + 1)],
+    //         };
+    //         var outsideCount: usize = 0;
+    //         var screenBounds = Bounds.initInfinity();
+    //         inline for (0..v.len) |i| {
+    //             const cameraVertex = shader.vertexShader(&mv, @intCast(i), v[i].mulDup(scale), shader);
+    //             const clipVertex = shader.projectionShader(proj, cameraVertex, viewport, shader);
+    //             var screenVertex = clipVertex.divDup(clipVertex.w());
+
+    //             if (screenVertex.minElement() < -1 or screenVertex.maxElement() > 1)
+    //                 outsideCount += 1;
+
+    //             const half = viewport.scaleDup(0.5);
+    //             const out = screenVertex;
+    //             screenVertex.setX(half.x() * out.x() + half.x());
+    //             screenVertex.setY(half.y() * -out.y() + half.y());
+
+    //             vscreen[i] = screenVertex;
+    //             screenBounds.add(screenVertex);
+    //         }
+
+    //         // if (outsideCount == 4)
+    //         //     continue;
+
+    //         screenBounds.limit(renderBounds);
+    //         screenBounds.topLeftHandLimit();
+
+    //         for (0..10) |i| {
+    //             const ioffset: f32 = @as(f32, @floatFromInt(i)) / 10.0;
+    //             for (0..10) |j| {
+    //                 const joffset = @as(f32, @floatFromInt(j)) / 10.0;
+    //                 const offset = Vec4f.init(ioffset, 0, joffset, 0);
+    //                 const p = v[0].addDup(offset);
+
+    //                 var h: f32 = 0;
+    //                 var hsum: f32 = 0;
+    //                 inline for (0..v.len) |vi| {
+    //                     var dir = v[vi].subDup(p);
+    //                     dir.setY(0);
+    //                     const dr = dir.length3();
+    //                     const d = @min(1.0, 1.0 / dr);
+    //                     h += d * v[vi].y();
+    //                     hsum += v[vi].y();
+    //                 }
+
+    //                 h /= hsum;
+    //                 const pfinal = Vec4f.init(p.x(), h * scale.y(), p.z(), 1);
+
+    //                 const cameraVertex = shader.vertexShader(&mv, 0, pfinal, shader);
+    //                 const clipVertex = shader.projectionShader(proj, cameraVertex, viewport, shader);
+    //                 var screenVertex = clipVertex.divDup(clipVertex.w());
+
+    //                 if (screenVertex.minElement() < -1 or screenVertex.maxElement() > 1)
+    //                     continue;
+
+    //                 const half = viewport.scaleDup(0.5);
+    //                 const out = screenVertex;
+    //                 screenVertex.setX(half.x() * out.x() + half.x());
+    //                 screenVertex.setY(half.y() * -out.y() + half.y());
+
+    //                 const fc = Color.fromNormalVec4f(Vec4f.splat3((h) * 2, 1));
+    //                 const pixel = core.vector.Vec4fToVec4i(screenVertex);
+
+    //                 colorBuffer[currentBuffer].write(pixel.x(), pixel.y(), fc);
+    //             }
+    //         }
+    //     }
+    // }
+
+    for (0..terrain.vertexBuffer.len) |i| {
+        const v = terrain.vertexBuffer[i];
+        //const vn = terrain.vertexBuffer[i + 1];
+        const cameraVertex = shader.vertexShader(&mv, @intCast(i), v.mulDup(scale), shader);
+
+        const clipVertex = shader.projectionShader(proj, cameraVertex, viewport, shader);
+
+        var screenVertex = clipVertex.divDup(clipVertex.w());
+
+        if (screenVertex.minElement() < -1 or screenVertex.maxElement() > 1)
+            continue;
+
+        const half = viewport.scaleDup(0.5);
+        const out = screenVertex;
+        screenVertex.setX(half.x() * out.x() + half.x());
+        screenVertex.setY(half.y() * -out.y() + half.y());
+
+        // const c = shader.pixelShader(
+        //     model,
+        //     &mv,
+        //     &mvp,
+        //     screenVertex,
+        //     screenVertex,
+        //     v,
+        //     Vec4f.up(),
+        //     Vec4f.init(v.x() / size.x(), v.z() / size.z(), 0, 1),
+        //     shader,
+        // );
+
+        const fc = Color.fromNormalVec4f(Vec4f.splat3(v.y() * 2, 1));
+        const pixel = core.vector.Vec4fToVec4i(screenVertex);
+
+        colorBuffer[currentBuffer].write(pixel.x(), pixel.y(), fc);
+        // depthBuffer[currentBuffer].writeIndex(dsx, z);
+    }
 }

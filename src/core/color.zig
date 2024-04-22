@@ -32,12 +32,12 @@ pub const Color = struct {
     }
 
     pub fn white() Color {
-        var color = Color{ .color = [4]u8{ 255, 255, 255, 255 } };
+        const color = Color{ .color = [4]u8{ 255, 255, 255, 255 } };
         return color;
     }
 
     pub fn black() Color {
-        var color = Color{ .color = [4]u8{ 0, 0, 0, 255 } };
+        const color = Color{ .color = [4]u8{ 0, 0, 0, 255 } };
         return color;
     }
 
@@ -67,12 +67,14 @@ pub const Color = struct {
     }
 
     pub fn fromNormalVec4f(vec: Vec4f) Color {
-        return Color.fromNormal(
-            @min(1.0, vec.x()),
-            @min(1.0, vec.y()),
-            @min(1.0, vec.z()),
-            @min(1.0, vec.w()),
-        );
+        const vc = vec.clamped01().scaleDup(255);
+        //const xc: @Vector(4, i32) = @intFromFloat(vc.v);
+        return .{ .color = [4]u8{
+            @intFromFloat(vc.v[0]),
+            @intFromFloat(vc.v[1]),
+            @intFromFloat(vc.v[2]),
+            @intFromFloat(vc.v[3]),
+        } };
     }
 
     pub fn toNormalVec4f(c: Color) Vec4f {

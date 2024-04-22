@@ -12,6 +12,7 @@
         // "\"-Dtracy-callstack=true\"",
         // "\"-Doptimize=Debug\"",
         "\"-Doptimize=ReleaseFast\""
+        // "\"-Doptimize=ReleaseSmall\""
       ],
       "group": {
         "kind": "build",

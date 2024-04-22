@@ -67,20 +67,37 @@ pub fn init(cfg: Config) !void {
     if (config.fullscreen)
         flags |= c.SDL_WINDOW_FULLSCREEN_DESKTOP;
 
-    window = c.SDL_CreateWindow("zig-engine", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, @as(c_int, @intCast(config.windowWidth)), @as(c_int, @intCast(config.windowHeight)), @as(u32, @intCast(flags))) // c.SDL_WINDOW_FULLSCREEN_DESKTOP ) //c.SDL_WINDOW_RESIZABLE)
+    window = c.SDL_CreateWindow(
+        "zig-engine",
+        SDL_WINDOWPOS_UNDEFINED,
+        SDL_WINDOWPOS_UNDEFINED,
+        @as(c_int, @intCast(config.windowWidth)),
+        @as(c_int, @intCast(config.windowHeight)),
+        @as(u32, @intCast(flags)),
+    ) // c.SDL_WINDOW_FULLSCREEN_DESKTOP ) //c.SDL_WINDOW_RESIZABLE)
         orelse
         {
         c.SDL_Log("Unable to create window: %s", c.SDL_GetError());
         return error.SDLInitializationFailed;
     };
 
-    renderer = c.SDL_CreateRenderer(window, -1, c.SDL_RENDERER_ACCELERATED) orelse
+    renderer = c.SDL_CreateRenderer(
+        window,
+        -1,
+        c.SDL_RENDERER_ACCELERATED,
+    ) orelse
         {
         c.SDL_Log("Unable to create renderer: %s", c.SDL_GetError());
         return error.SDLInitializationFailed;
     };
 
-    renderTexture = c.SDL_CreateTexture(renderer, c.SDL_PIXELFORMAT_ABGR8888, c.SDL_TEXTUREACCESS_STATIC, @as(c_int, @intCast(config.renderWidth)), @as(c_int, @intCast(config.renderHeight)));
+    renderTexture = c.SDL_CreateTexture(
+        renderer,
+        c.SDL_PIXELFORMAT_ABGR8888,
+        c.SDL_TEXTUREACCESS_STATIC,
+        @as(c_int, @intCast(config.renderWidth)),
+        @as(c_int, @intCast(config.renderHeight)),
+    );
 }
 
 pub fn showMouseCursor(show: u1) u1 {
@@ -101,7 +118,7 @@ pub inline fn targetFrameTimeMs() u32 {
 
 /// Set Render texture pointer
 pub fn updateRenderTexture(data: *u8, len: usize) void {
-    var pixelsPtr = @as(*anyopaque, @ptrCast(data));
+    const pixelsPtr = @as(*anyopaque, @ptrCast(data));
     if (c.SDL_UpdateTexture(renderTexture, 0, pixelsPtr, @as(c_int, @intCast(len))) != 0)
         c.SDL_Log("Unable to update texture: %s", c.SDL_GetError());
 }
@@ -170,7 +187,7 @@ pub fn renderPresent() void {
 pub fn endUpdate() u32 {
     common.endUpdate();
 
-    var t1 = @as(u32, @intCast(c.SDL_GetTicks()));
+    const t1 = @as(u32, @intCast(c.SDL_GetTicks()));
     const dtInt = t1 - t0;
     // if (dtInt < config.targetDt())
     //     c.SDL_Delay((config.targetDt() - dtInt) - 1);

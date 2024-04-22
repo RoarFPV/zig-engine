@@ -1,9 +1,17 @@
 // const std = @import("std");
 const Vec4f = @import("vector.zig").Vec4f;
+const std = @import("std");
 
 pub const Bounds = struct {
     min: Vec4f,
     max: Vec4f,
+
+    pub fn initInfinity() Bounds {
+        return Bounds{
+            .min = Vec4f.splat(std.math.inf(f32)),
+            .max = Vec4f.splat(-std.math.inf(f32)),
+        };
+    }
 
     pub fn init(min: Vec4f, max: Vec4f) Bounds {
         return Bounds{

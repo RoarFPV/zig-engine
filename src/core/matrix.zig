@@ -139,15 +139,15 @@ pub const Mat44f = struct {
     }
 
     pub fn forward(self: Mat44f) Vec4f {
-        return self.mul33_vec4(Vec4f.forward());
+        return self.mul33_vec4(Vec4f.forward()).normalized();
     }
 
     pub inline fn up(self: Mat44f) Vec4f {
-        return self.mul33_vec4(Vec4f.up());
+        return self.mul33_vec4(Vec4f.up()).normalized();
     }
 
     pub inline fn right(self: Mat44f) Vec4f {
-        return self.mul33_vec4(Vec4f.right());
+        return self.mul33_vec4(Vec4f.right()).normalized();
     }
 
     pub fn createPerspective(fovy: f32, aspect: f32, nearZ: f32, farZ: f32) Mat44f {
