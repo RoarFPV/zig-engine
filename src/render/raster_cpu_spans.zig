@@ -945,36 +945,104 @@ fn shadeTriBB(triData: *TriRasterData, bounds: Bounds) void {
     }
 }
 
-const BaryEdge = struct {
+const BaryParameter = struct {
     const Self = @This();
-    v: Vec4f,
-    nextX: Vec4f,
-    nextY: Vec4f,
+    start: Vec4f,
+    stepRow: Vec4f,
+    stepCol: Vec4f,
 
-    pub fn init(v0: Vec4f, v1: Vec4f, start: Vec4f) Self {
-        const A: f32 = v0.y() - v1.y();
-        const B: f32 = v1.x() - v0.x();
-        const C: f32 = v0.x() * v1.y() - v0.y() * v1.x();
+    row: Vec4f,
+    col: Vec4f,
 
-        const stepX = Vec4f.splat(A * 1);
-        const stepY = Vec4f.splat(B * 1);
+    // pub fn init(v0: Vec4f, v1: Vec4f, start: Vec4f) Self {
+    //     const A: f32 = v0.y() - v1.y();
+    //     const B: f32 = v1.x() - v0.x();
+    //     const C: f32 = v0.x() * v1.y() - v0.y() * v1.x();
 
-        const x = Vec4f.splat(start.x()); // + other offsets
-        const y = Vec4f.splat(start.y());
+    //     const stepX = Vec4f.splat(A * 1);
+    //     const stepY = Vec4f.splat(B * 1);
 
-        const vA = Vec4f.splat(A);
-        const vB = Vec4f.splat(B);
-        const vC = Vec4f.splat(C);
+    //     const x = Vec4f.splat(start.x()); // + other offsets
+    //     const y = Vec4f.splat(start.y());
 
-        var startBary = vA.mulDup(x);
-        startBary.add(vB.mulDup(y));
-        startBary.add(vC);
+    //     const vA = Vec4f.splat(A);
+    //     const vB = Vec4f.splat(B);
+    //     const vC = Vec4f.splat(C);
+
+    //     var startBary = vA.mulDup(x);
+    //     startBary.add(vB.mulDup(y));
+    //     startBary.add(vC);
+
+    //     return .{
+    //         .v = startBary,
+    //         .nextX = stepX,
+    //         .nextY = stepY,
+    //     };
+    // }
+
+    pub fn init(v: [3]Vec4f, start: Vec4f) Self {
+        const s = Vec4f.triBarycentericCoordsOld(
+            v[0],
+            v[1],
+            v[2],
+            start,
+        );
+        return .{
+            .start = s,
+            .row = s,
+            .col = s,
+
+            .stepCol = Vec4f.init(
+                v[2].y() - v[1].y(),
+                v[0].y() - v[2].y(),
+                v[1].y() - v[0].y(),
+                1,
+            ),
+            .stepRow = Vec4f.init(
+                v[1].x() - v[2].x(),
+                v[2].x() - v[0].x(),
+                v[0].x() - v[1].x(),
+                1,
+            ),
+        };
+    }
+
+    pub fn fromTri(triParam: BaryParameter, v: [3]Vec4f, triArea: f32) Self {
+        // _ = triArea;
+        const sd = triParam.start.divDup(triArea);
+        const s = sd.triInterpArray(v, 0);
+        const sr = triParam.start.addDup(triParam.stepRow)
+            .divDup(triArea)
+            .triInterpArray(v, 0)
+            .subDup(s);
+
+        const sc = triParam.start.addDup(triParam.stepCol)
+            .divDup(triArea)
+            .triInterpArray(v, 0)
+            .subDup(s);
 
         return .{
-            .v = startBary,
-            .nextX = stepX,
-            .nextY = stepY,
+            .start = s,
+            .row = s,
+            .col = s,
+
+            .stepCol = sc,
+            .stepRow = sr,
         };
+    }
+
+    pub fn reset(self: *Self) void {
+        self.row = self.start;
+        self.col = self.start;
+    }
+
+    pub fn nextRow(self: *Self) void {
+        self.row.add(self.stepRow);
+        self.col = self.row;
+    }
+
+    pub fn nextCol(self: *Self) void {
+        self.col.add(self.stepCol);
     }
 };
 
@@ -1007,44 +1075,25 @@ fn shadeTriBBSingle(triData: *TriRasterData, bounds: Bounds) void {
     //     writePixel(pixx, pixy, pix.z(), Color.fromNormalVec4f(triData.color[i]));
     // }
 
-    const baryStart = Vec4f.triBarycentericCoordsOld(
-        triData.screenVertex[0],
-        triData.screenVertex[1],
-        triData.screenVertex[2],
-        bounds.min.addScalarDup(0.5),
-    );
+    var screenVertexBary = BaryParameter.init(triData.screenVertex, bounds.min.addScalarDup(0.5));
+    var uvBary = BaryParameter.fromTri(screenVertexBary, triData.uv, triData.screenArea);
+    var colorBary = BaryParameter.fromTri(screenVertexBary, triData.color, triData.screenArea);
+    var normalBary = BaryParameter.fromTri(screenVertexBary, triData.worldNormals, triData.screenArea);
+    var worldVertexBary = BaryParameter.fromTri(screenVertexBary, triData.worldVertex, triData.screenArea);
 
-    // const edge12 = BaryEdge.init(triData.screenVertex[1], triData.screenVertex[2], bounds.min);
-    // const edge20 = BaryEdge.init(triData.screenVertex[2], triData.screenVertex[0], bounds.min);
-    // const edge01 = BaryEdge.init(triData.screenVertex[0], triData.screenVertex[1], bounds.min);
-
-    // const edges = [3]BaryEdge{ edge12, edge20, edge01 };
-    // var wrow = [3]Vec4f{ edge12.v, edge20.v, edge01.v };
-
-    var baryRow = baryStart;
-    const baryStepX = Vec4f.init(
-        triData.screenVertex[2].y() - triData.screenVertex[1].y(),
-        triData.screenVertex[0].y() - triData.screenVertex[2].y(),
-        triData.screenVertex[1].y() - triData.screenVertex[0].y(),
-        1,
-    );
-    const baryStepY = Vec4f.init(
-        triData.screenVertex[1].x() - triData.screenVertex[2].x(),
-        triData.screenVertex[2].x() - triData.screenVertex[0].x(),
-        triData.screenVertex[0].x() - triData.screenVertex[1].x(),
-        1,
-    );
     // var minBary = Vec4f.triBarycentericCoordsOld(triData.screenVertex[0], triData.screenVertex[1], triData.screenVertex[2], bounds.min);
 
     while (y <= bounds.max.y()) {
         var x = bounds.min.x();
         defer y += 1;
         defer dsy += width;
-        defer baryRow.add(baryStepY);
+        defer screenVertexBary.nextRow();
+        defer uvBary.nextRow();
+        defer colorBary.nextRow();
+        defer normalBary.nextRow();
+        defer worldVertexBary.nextRow();
 
         var dsx = dsy;
-
-        var wspan = baryRow;
 
         while (x <= bounds.max.x()) {
             // var sprt = core.profiler.Sampler.initAndBegin(profile.?, @src().fn_name, 2);
@@ -1057,17 +1106,21 @@ fn shadeTriBBSingle(triData: *TriRasterData, bounds: Bounds) void {
             //_ = @atomicRmw(u32, &stats.totalPixels, .Add, 1, .seq_cst);
             defer dsx += 1;
             defer x += 1;
-            defer wspan.add(baryStepX);
+            defer screenVertexBary.nextCol();
+            defer uvBary.nextCol();
+            defer colorBary.nextCol();
+            defer normalBary.nextCol();
+            defer worldVertexBary.nextCol();
 
             p.setX(x);
             p.setY(y);
 
-            var triBary = wspan;
+            var triBary = screenVertexBary.col;
 
-            const minBary = triBary.minElement();
-            const outsideTri = std.math.signbit(minBary) or !std.math.isFinite(minBary);
+            // const minBary = triBary.minElement();
+            // const outsideTri = std.math.signbit(minBary) or !std.math.isFinite(minBary);
 
-            if (outsideTri) // and (triData.clipCount == 0 or (x != bounds.max.x() and x != bounds.min.x() and y != bounds.max.y() and y != bounds.min.y())))
+            if (triBary.x() < 0 or triBary.y() < 0 or triBary.z() < 0) // and (triData.clipCount == 0 or (x != bounds.max.x() and x != bounds.min.x() and y != bounds.max.y() and y != bounds.min.y())))
                 continue;
 
             triBary.div(triData.screenArea);
@@ -1078,7 +1131,7 @@ fn shadeTriBBSingle(triData: *TriRasterData, bounds: Bounds) void {
 
             p.setZ(z);
 
-            var write = outsideTri;
+            var write = false;
             if (depthTest == 1) {
                 const depth = depthBuffer[currentBuffer].readIndex(dsx);
                 write = std.math.isInf(depth) or depth > z;
@@ -1087,13 +1140,20 @@ fn shadeTriBBSingle(triData: *TriRasterData, bounds: Bounds) void {
             if (write) {
 
                 // interpolate vertex colors across all pixels
-                uv = triBary.triInterpArray(triData.uv, 0);
+                // const uvold = triBary.triInterpArray(triData.uv, 0);
+                uv = uvBary.col;
+                // uv = uvold;
                 const w = 1 / uv.w();
+                const uvw = uv.scaleDup(w);
 
-                fbc = triBary.triInterpArray(triData.color, 1);
-                pixelNormal = triBary.triInterpArrayScale(triData.worldNormals, 0, w);
+                // fbc = triBary.triInterpArray(triData.color, 1);
+                fbc = colorBary.col;
+                //pixelNormal = triBary.triInterpArrayScale(triData.worldNormals, 0, w);
+                pixelNormal = normalBary.col.scaleDup(w);
 
-                const pl = triBary.triInterpArray(triData.worldVertex, 1);
+                //const pl = triBary.triInterpArray(triData.worldVertex, 1);
+
+                const pl = worldVertexBary.col;
 
                 const vc = shader.pixelShader(
                     triData.meshData.model,
@@ -1103,7 +1163,7 @@ fn shadeTriBBSingle(triData: *TriRasterData, bounds: Bounds) void {
                     pl, //triData.worldNormals[0],
                     fbc,
                     pixelNormal,
-                    uv.scaleDup(w),
+                    uvw,
                     shader,
                 );
 

@@ -43,10 +43,10 @@ pub fn init() !void {
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/triangle.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/bed.obj");
     //mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/crates/crate-04-1.obj");
-    // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/suzanne.obj");
-    // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/E1M1.bsp.geometry.tri.obj");
+    mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/suzanne.obj");
+    //mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/E1M1.bsp.geometry.tri.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/castle.obj");
-    mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/landscape1.obj");
+    // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/landscape1.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/sponza.obj");
     //mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/plane.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/axis.obj");
@@ -566,7 +566,7 @@ fn shader_lit_pbr_texture0_frag(
     const nDotH = @max(n.dot3(h), 0.0000001);
     const vDotH = @max(h.dot3(v), 0.0000001);
     const nDotL = @max(l.dot3(n), 0.0);
-    const nDotV = @max(n.dot3(v), 0.0);
+    const nDotV = @max(n.dot3(v), 0.0000001);
 
     //_ = uv;
     var c = material.texture.sample(uv.x(), uv.y());
@@ -586,7 +586,8 @@ fn shader_lit_pbr_texture0_frag(
     var specular = F.scaleDup(D * G);
     specular.div(4.0 * nDotV * nDotL + 1);
 
-    const light = kD.mulDup(c).divDup(PI)
+    const light = kD.mulDup(c)
+        .divDup(PI)
         .addDup(specular)
         .mulDup(LightIntensity)
         .scaleDup(nDotL);
