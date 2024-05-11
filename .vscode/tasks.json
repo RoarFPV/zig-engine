@@ -3,7 +3,7 @@
   "tasks": [
     {
       "label": "zig-engine build",
-      "type": "shell",
+      "type":"shell",
       "command": "zig",
       "args": [
         "build",

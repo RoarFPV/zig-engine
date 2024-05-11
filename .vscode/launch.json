@@ -5,6 +5,15 @@
   "version": "0.2.0",
   "configurations": [    
     {
+      "type": "gdb",
+      "request": "launch",
+      "name": "(Linux) gdb",
+      "target": "${workspaceFolder}/zig-out/bin/zig-engine",
+      "cwd": "${workspaceFolder}/zig-out/bin",
+      "valuesFormatting": "parseText",
+      "preLaunchTask": "zig-engine build",
+    },
+    {
       "name": "(Windows) Launch",
       "type": "cppvsdbg",
       "request": "launch",
@@ -18,7 +27,7 @@
     },
     {
       "name": "(gdb) Launch",
-      "type": "lldb",
+      "type": "gdb",
       "request": "launch",
       "program": "${workspaceFolder}/zig-out/bin/zig-engine",
       "args": [],
@@ -27,7 +36,7 @@
       "environment": [],
       "externalConsole": false,
       "MIMode": "gdb",
-      "preLaunchTask": "zig-engine build",
+      // "preLaunchTask": "zig-engine build",
       "setupCommands": [
         {
           "description": "Enable pretty-printing for gdb",

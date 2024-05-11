@@ -395,7 +395,7 @@ pub fn beginFrame(profiler: ?*Profile) *u8 {
     defer profile.?.endSample(pprof);
 
     stats.reset();
-    const now = std.time.Instant.now() catch std.time.Instant{ .timestamp = 0 };
+    const now = std.time.Instant.now() catch std.time.Instant{ .timestamp = undefined };
     stats.renderStartTime = now;
     currentBuffer = ~currentBuffer;
 
@@ -456,7 +456,7 @@ fn renderTrisSingle() void {
 }
 
 pub fn endFrame() void {
-    const now = std.time.Instant.now() catch std.time.Instant{ .timestamp = 0 };
+    const now = std.time.Instant.now() catch std.time.Instant{ .timestamp = undefined };
     stats.renderEndTime = now;
 
     if (useSingleBB) {

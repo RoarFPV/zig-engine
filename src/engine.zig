@@ -280,7 +280,7 @@ pub fn displayProfileUi(self: *Profile, x: i32, y: i32, lineSize: i32, maxWidth:
         if (sample.depth >= maxDepth)
             continue;
 
-        if (i == 0 or sample.begin.timestamp == 0 or sample.begin.order(self.frameStartTime) == std.math.Order.lt)
+        if (i == 0 or sample.begin.since(self.frameStartTime) <= 0 or sample.begin.order(self.frameStartTime) == std.math.Order.lt)
             continue;
 
         const begin: f32 = @floatFromInt(sample.begin.since(self.frameStartTime));
