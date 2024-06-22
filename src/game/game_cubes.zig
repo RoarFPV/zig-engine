@@ -43,8 +43,8 @@ pub fn init() !void {
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/triangle.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/bed.obj");
     //mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/crates/crate-04-1.obj");
-    mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/suzanne.obj");
-    //mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/E1M1.bsp.geometry.tri.obj");
+    // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/suzanne.obj");
+    mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/E1M1.bsp.geometry.tri.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/castle.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/landscape1.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/sponza.obj");

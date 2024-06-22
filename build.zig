@@ -39,7 +39,7 @@ pub fn build(b: *std.Build) void {
     if (tracy) {
         const tracyPath = "external/tracy/public";
 
-        const client_cpp = .{ .path = std.fs.path.join(b.allocator, &[_][]const u8{ tracyPath, "TracyClient.cpp" }) catch unreachable };
+        const client_cpp = std.fs.path.join(b.allocator, &[_][]const u8{ tracyPath, "TracyClient.cpp" }) catch unreachable;
         // On mingw, we need to opt into windows 7+ to get some features required by tracy.
         const tracy_c_flags: []const []const u8 = if (target.result.os.tag == .windows and target.result.abi.isGnu())
             &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined", "-D_WIN32_WINNT=0x601" }
@@ -47,7 +47,7 @@ pub fn build(b: *std.Build) void {
             &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined" };
 
         exe.addIncludePath(b.path("external/tracy/public"));
-        exe.addCSourceFile(.{ .file = client_cpp, .flags = tracy_c_flags });
+        exe.addCSourceFile(.{ .file = b.path(client_cpp), .flags = tracy_c_flags });
         exe.linkLibCpp();
         exe.linkLibC();
 
@@ -106,7 +106,7 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/engine.zig" },
+        .root_source_file = b.path("src/engine.zig"),
         .target = target,
         .optimize = optimize,
     });
