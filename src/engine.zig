@@ -7,6 +7,10 @@ const Timer = std.time.Timer;
 
 // engine imports
 pub const sys = @import("system/sys_sdl.zig");
+
+const dvui = @import("dvui");
+pub const ui = dvui;
+
 //pub const render = @import("render/raster_cpu_jobs.zig");
 // pub const render = @import("render/raytracer_cpu.zig");
 pub const render = @import("render/raster_cpu_spans.zig");
@@ -142,7 +146,7 @@ pub fn main() !void {
     const bufferLineSize = render.bufferLineSize();
 
     var quit = false;
-    const targetFrameTimeNs = @as(f32, @floatFromInt(sys.targetFrameTimeMs() * 1_000_000));
+    // const targetFrameTimeNs = @as(f32, @floatFromInt(sys.targetFrameTimeMs() * 1_000_000));
 
     _ = try game.init();
 
@@ -172,6 +176,41 @@ pub fn main() !void {
             }
 
             const b = render.beginFrame(profiler);
+
+            {
+                var m = try dvui.box(@src(), .vertical, .{ .gravity_y = 1.0, .background = false, .expand = .horizontal });
+                defer m.deinit();
+
+                if (try dvui.expander(@src(), "Basic Widgets", .{}, .{ .expand = .horizontal })) {
+                    var box = try dvui.box(@src(), .vertical, .{ .expand = .horizontal, .margin = .{ .x = 10 } });
+                    defer box.deinit();
+                    // try basicWidgets();
+                }
+            }
+            // {
+            //     var m = try dvui.menu(@src(), .horizontal, .{ .background = true, .expand = .horizontal });
+            //     defer m.deinit();
+
+            //     if (try dvui.menuItemLabel(@src(), "File", .{ .submenu = true }, .{ .expand = .none })) |r| {
+            //         var fw = try dvui.floatingMenu(@src(), dvui.Rect.fromPoint(dvui.Point{ .x = r.x, .y = r.y + r.h }), .{});
+            //         defer fw.deinit();
+
+            //         if (try dvui.menuItemLabel(@src(), "Close Menu", .{}, .{}) != null) {
+            //             dvui.menuGet().?.close();
+            //         }
+            //     }
+
+            //     if (try dvui.menuItemLabel(@src(), "Edit", .{ .submenu = true }, .{ .expand = .none })) |r| {
+            //         var fw = try dvui.floatingMenu(@src(), dvui.Rect.fromPoint(dvui.Point{ .x = r.x, .y = r.y + r.h }), .{});
+            //         defer fw.deinit();
+            //         _ = try dvui.menuItemLabel(@src(), "Dummy", .{}, .{ .expand = .horizontal });
+            //         _ = try dvui.menuItemLabel(@src(), "Dummy Long", .{}, .{ .expand = .horizontal });
+            //         _ = try dvui.menuItemLabel(@src(), "Dummy Super Long", .{}, .{ .expand = .horizontal });
+            //     }
+            // }
+            dvui.Examples.show_demo_window = true;
+            try dvui.Examples.demo();
+
             {
                 var c = Sampler.initAndBegin(profiler, "game.update", 2);
                 defer c.end();
@@ -189,27 +228,27 @@ pub fn main() !void {
                 var srt = Sampler.initAndBegin(profiler, "engine.render.profile", 0);
                 defer srt.end();
 
-                if (lastProfile.hasSamples()) {
-                    // render.drawString(&font, "0123456789\n", 10, 50, Vec4f.one());
-                    displayProfileUi(
-                        lastProfile,
-                        2,
-                        2,
-                        5,
-                        systemConfig.renderWidth - 5,
-                        8,
-                        targetFrameTimeNs,
-                    );
-                    //render.drawProgress(2, 2, 100, @intToFloat(f32, lastProfile.sampleTime(1)), targetFrameTimeNs );
-                    //render.drawProgress(2, 5, 100, @intToFloat(f32, lastProfile.sampleTime(2)), targetFrameTimeNs );
-                }
+                // if (lastProfile.hasSamples()) {
+                //     // render.drawString(&font, "0123456789\n", 10, 50, Vec4f.one());
+                //     displayProfileUi(
+                //         lastProfile,
+                //         2,
+                //         2,
+                //         5,
+                //         systemConfig.renderWidth - 5,
+                //         8,
+                //         targetFrameTimeNs,
+                //     );
+                //     //render.drawProgress(2, 2, 100, @intToFloat(f32, lastProfile.sampleTime(1)), targetFrameTimeNs );
+                //     //render.drawProgress(2, 5, 100, @intToFloat(f32, lastProfile.sampleTime(2)), targetFrameTimeNs );
+                // }
             }
 
             {
                 var srt = Sampler.initAndBegin(profiler, "system.render.present", 2);
                 defer srt.end();
 
-                sys.updateRenderTexture(b, bufferLineSize);
+                sys.updateRenderTexture(&b[0].color[0], bufferLineSize);
                 sys.renderPresent();
             }
 

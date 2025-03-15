@@ -40,7 +40,7 @@ pub fn find(buf: []const u8, start: usize, char: u8) ![]const u8 {
 }
 
 pub fn parseVertex(buf: []const u8) ![2]Vec4f {
-    var iter = std.mem.split(u8, buf, " ");
+    var iter = std.mem.splitSequence(u8, buf, " ");
     var count: usize = 0;
     var pos = Vec4f.init(0, 0, 0, 1);
     var color = Vec4f.one();
@@ -83,7 +83,7 @@ pub fn parseVertex(buf: []const u8) ![2]Vec4f {
 }
 
 pub fn parseVector(buf: []const u8) !Vec4f {
-    var iter = std.mem.split(u8, buf, " ");
+    var iter = std.mem.splitSequence(u8, buf, " ");
     var count: usize = 0;
     var vec = Vec4f.zero();
     while (iter.next()) |el| {

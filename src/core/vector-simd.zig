@@ -932,7 +932,7 @@ const assert = @import("std").debug.assert;
 const epsilon = 0.00001;
 
 pub fn assert_f32_equal(actual: f32, expected: f32) void {
-    const diff = math.fabs(actual - expected);
+    const diff = @abs(actual - expected);
     // std.debug.print("{} - {} = {}, e={}, d < e = {}\n", .{actual, expected, diff, epsilon, diff < epsilon });
     assert(diff < epsilon);
 }

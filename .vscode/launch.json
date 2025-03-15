@@ -5,6 +5,15 @@
   "version": "0.2.0",
   "configurations": [    
     {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Launch",
+      "program": "${workspaceFolder}/zig-out/bin/zig-engine",
+      "args": [],
+      "cwd": "${workspaceFolder}/zig-out/bin",
+      "preLaunchTask": "zig-engine build",
+    },
+    {
       "type": "gdb",
       "request": "launch",
       "name": "(Linux) gdb",

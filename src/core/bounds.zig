@@ -53,4 +53,10 @@ pub const Bounds = struct {
             .divDup(2)
             .addDup(self.min);
     }
+
+    pub fn clampPoint(self: Bounds, point: Vec4f) Vec4f {
+        var p = Vec4f.max(point, self.min);
+        p = Vec4f.min(p, self.max);
+        return p;
+    }
 };

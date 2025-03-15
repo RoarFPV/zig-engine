@@ -103,7 +103,7 @@ pub const Stats = struct {
 
     pub fn reset(self: *Self) void {
         const ti = @typeInfo(Self);
-        inline for (ti.Struct.fields) |field| {
+        inline for (ti.@"struct".fields) |field| {
             @field(self, field.name) = undefined;
         }
     }
@@ -302,7 +302,7 @@ var renderBounds: Bounds = undefined;
 var profile: ?*Profile = undefined;
 var allocator: *std.mem.Allocator = undefined;
 var colorRenderer: PixelRenderer(Color) = undefined;
-var triQueue: std.MultiArrayList(TriRasterData) = undefined;
+var triQueue: std.ArrayListUnmanaged(TriRasterData) = undefined;
 pub var viewFrustum: Frustum = Frustum{};
 
 pub var viewConfig: Vec4f = Vec4f.init(0.1, 1000, 90, 0);
@@ -349,7 +349,7 @@ pub fn init(renderWidth: u16, renderHeight: u16, alloc: *std.mem.Allocator, prof
     const clearColor = Color.init(34, 34, 34, 255);
     const clearDepth = std.math.inf(f32);
 
-    triQueue = std.MultiArrayList(TriRasterData){};
+    // triQueue = std.ArrayList(TriRasterData){};
     try triQueue.ensureTotalCapacity(alloc.*, 1024 * 1024);
 
     currentBuffer = 0;
@@ -384,9 +384,10 @@ pub fn shutdown() void {
     depthBuffer[0].deinit();
     depthBuffer[1].deinit();
     triQueue.deinit(allocator.*);
+    // triQueue.deinit();
 }
 
-pub fn beginFrame(profiler: ?*Profile) *u8 {
+pub fn beginFrame(profiler: ?*Profile) []Color {
     const zone = trace(@src());
     defer zone.end();
 
@@ -409,7 +410,7 @@ pub fn beginFrame(profiler: ?*Profile) *u8 {
 
     stats.totalPixels = w * h;
 
-    return &colorBuffer[currentBuffer].bufferStart().color[0];
+    return colorBuffer[currentBuffer].buffer.items;
 }
 
 pub var useSingleBB: bool = true;
@@ -419,10 +420,10 @@ fn renderTris() void {
     defer zone.end();
 
     var next: usize = 0;
-    while (next < triQueue.len) {
+    while (next < triQueue.items.len) {
         defer next += 1;
 
-        var tri = triQueue.get(next);
+        var tri = triQueue.items[next];
 
         if (!clipTri(&tri)) {
             continue;
@@ -432,7 +433,7 @@ fn renderTris() void {
         shadeTriBB(&tri, tri.screenBounds);
     }
 
-    triQueue.len = 0;
+    triQueue.items.len = 0;
 }
 
 fn renderTrisSingle() void {
@@ -440,19 +441,20 @@ fn renderTrisSingle() void {
     defer zone.end();
 
     var next: usize = 0;
-    while (next < triQueue.len) {
+    while (next < triQueue.items.len) {
         defer next += 1;
 
-        var tri = triQueue.get(next);
+        var tri = triQueue.items[next];
 
         if (!clipTri(&tri)) {
             continue;
         }
 
-        shadeTriBBSingle(&tri, tri.screenBounds);
+        shadeTriTB(&tri);
+        // shadeTriBBSingle(&tri, tri.screenBounds);
     }
 
-    triQueue.len = 0;
+    triQueue.items.len = 0;
 }
 
 pub fn endFrame() void {
@@ -1174,6 +1176,125 @@ fn shadeTriBBSingle(triData: *TriRasterData, bounds: Bounds) void {
                 depthBuffer[currentBuffer].writeIndex(dsx, z);
             }
         }
+    }
+}
+
+fn shadeTriFlatTop(cmd: *TriRasterData, v: [3]Vec4f) void {
+    const invslope = Vec4f.init(
+        (v[2].x() - v[0].x()) / @max(1.0, v[2].y() - v[0].y()),
+        (v[2].x() - v[1].x()) / @max(1.0, v[2].y() - v[1].y()),
+        0,
+        0,
+    );
+
+    var curx = Vec4f.splat(v[0].x());
+
+    const minx = Vec4f.splat(@min(@min(v[0].x(), v[1].x()), v[2].x()));
+    const maxx = Vec4f.splat(@max(@max(v[0].x(), v[1].x()), v[2].x()));
+
+    // cmd.clipCount += 1;
+
+    const s: u32 = @intFromFloat(v[0].y());
+    const e: u32 = @intFromFloat(v[1].y());
+
+    var y: usize = e;
+    while (y >= s) {
+        shadeTriLine(cmd, @intFromFloat(curx.x()), @intFromFloat(curx.y()), @intCast(y));
+        curx.add(invslope);
+        curx.clamp(minx, maxx);
+        y -= 1;
+    }
+    // cmd.clipCount -= 1;
+}
+
+fn shadeTriFlatBottom(cmd: *TriRasterData, sv: [3]Vec4f) void {
+    const invslope = Vec4f.init(
+        (sv[1].x() - sv[0].x()) / @max(1.0, sv[1].y() - sv[0].y()),
+        (sv[2].x() - sv[0].x()) / @max(1.0, sv[2].y() - sv[0].y()),
+        0,
+        0,
+    );
+
+    const v = sv;
+    // const v = .{
+    //     renderBounds.clampPoint(sv[0]),
+    //     renderBounds.clampPoint(sv[1]),
+    //     renderBounds.clampPoint(sv[2]),
+    // };
+
+    const maxscrx = renderBounds.size().x();
+    var curx = Vec4f.splat(v[0].x());
+
+    const minx = Vec4f.splat(@min(maxscrx, @max(0.0, @min(@min(v[0].x(), v[1].x()), v[2].x()))));
+    const maxx = Vec4f.splat(@min(maxscrx, @max(0.0, @max(@max(v[0].x(), v[1].x()), v[2].x()))));
+
+    cmd.clipCount += 1;
+
+    const s: u32 = @intFromFloat(v[0].y());
+    const e: u32 = @intFromFloat(v[1].y());
+
+    for (s..e) |y| {
+        shadeTriLine(cmd, @intFromFloat(curx.x()), @intFromFloat(curx.y()), @intCast(y));
+        curx.add(invslope);
+        curx.clamp(minx, maxx);
+        // curx.clamp(0, renderBounds.size().x());
+    }
+    cmd.clipCount -= 1;
+}
+
+fn shadeTriLine(cmd: *TriRasterData, x1: u32, x2: u32, y: u32) void {
+    const v = cmd.screenVertex;
+    const xs = @min(x1, x2);
+    const xf = @max(x1, x2);
+
+    for (xs..xf) |x| {
+        var p = Vec4f.initXY(
+            @as(f32, @floatFromInt(x)) + 0.5,
+            @as(f32, @floatFromInt(y)) + 0.5,
+        );
+
+        const pbary = Vec4f.triBarycentericCoordsOld(
+            v[0],
+            v[1],
+            v[2],
+            p,
+        ).divDup(cmd.screenArea);
+
+        p.setZ(pbary.x() * v[0].z() + pbary.y() * v[1].z() + pbary.z() * v[2].z());
+
+        const vcolor = Vec4f.triInterpArray(pbary, cmd.color, 0);
+
+        const fc = Color.fromNormalVec4f(vcolor);
+        colorBuffer[currentBuffer].write(@intFromFloat(p.x()), @intFromFloat(p.y()), fc);
+        depthBuffer[currentBuffer].write(@intFromFloat(p.x()), @intFromFloat(p.y()), p.z());
+    }
+}
+
+fn shadeTriTB(cmd: *TriRasterData) void {
+    if (cmd.screenVertex[0].y() > cmd.screenVertex[1].y())
+        std.mem.swap(Vec4f, &cmd.screenVertex[0], &cmd.screenVertex[1]);
+
+    if (cmd.screenVertex[1].y() > cmd.screenVertex[2].y())
+        std.mem.swap(Vec4f, &cmd.screenVertex[1], &cmd.screenVertex[2]);
+
+    if (cmd.screenVertex[0].y() > cmd.screenVertex[1].y())
+        std.mem.swap(Vec4f, &cmd.screenVertex[0], &cmd.screenVertex[1]);
+
+    const sv = cmd.screenVertex;
+
+    if (math.floor(sv[0].y()) == math.floor(sv[1].y())) {
+        shadeTriFlatTop(cmd, sv);
+    } else if (math.floor(sv[1].y()) == math.floor(sv[2].y())) {
+        shadeTriFlatBottom(cmd, sv);
+    } else {
+        const v4 = Vec4f.init(
+            sv[0].x() + ((sv[1].y() - sv[0].y()) / (sv[2].y() - sv[0].y())) * (sv[2].x() - sv[0].x()),
+            sv[1].y(),
+            0,
+            1,
+        );
+        shadeTriFlatBottom(cmd, .{ sv[0], sv[1], v4 });
+        shadeTriFlatTop(cmd, .{ sv[1], v4, sv[1] });
     }
 }
 

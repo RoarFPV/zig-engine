@@ -10,8 +10,8 @@
         // "\"-Dtracy=true\"",
         // "-Dtracy-allocation=true",
         // "\"-Dtracy-callstack=true\"",
-        // "\"-Doptimize=Debug\"",
-        "\"-Doptimize=ReleaseFast\""
+        "\"-Doptimize=Debug\"",
+        // "\"-Doptimize=ReleaseFast\""
         // "\"-Doptimize=ReleaseSmall\""
       ],
       "group": {

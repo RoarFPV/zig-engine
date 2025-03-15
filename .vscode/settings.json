@@ -1,4 +1,6 @@
 {
   "editor.tabSize": 2,
-  "cmake.configureOnOpen": false
+  "cmake.configureOnOpen": false,
+  "zig.path": "/home/john/zig/0.13.0/files/zig",
+  "zig.zls.additionalOptions": {}
 }

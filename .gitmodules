@@ -10,3 +10,9 @@
 [submodule "external/tools/zls"]
 	path = external/tools/zls
 	url = git@github.com:zigtools/zls.git
+[submodule "external/dvui"]
+	path = external/dvui
+	url = git@github.com:david-vanderson/dvui.git
+[submodule "external/clay"]
+	path = external/clay
+	url = git@github.com:nicbarker/clay.git

@@ -1,0 +1,160 @@
+{
+  "main": {
+    "id": "71f8f59d5a1cb498",
+    "type": "split",
+    "children": [
+      {
+        "id": "32ef9d1b86a2f147",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "9c15095c354e0ee5",
+            "type": "leaf",
+            "state": {
+              "type": "image",
+              "state": {
+                "file": "assets/crates/Preview.jpg"
+              }
+            }
+          },
+          {
+            "id": "0bef1db032f22389",
+            "type": "leaf",
+            "state": {
+              "type": "empty",
+              "state": {}
+            }
+          }
+        ],
+        "currentTab": 1
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "020a969b0357dd3d",
+    "type": "split",
+    "children": [
+      {
+        "id": "2db1a92e12648a85",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "1d0523ed07e063f3",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical"
+              }
+            }
+          },
+          {
+            "id": "ce616e8213721ac9",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              }
+            }
+          },
+          {
+            "id": "5a9db37db46a50d4",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {}
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "5537c553ac0d09c1",
+    "type": "split",
+    "children": [
+      {
+        "id": "31129624d425954d",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "b3dfe428c4b5d3ce",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              }
+            }
+          },
+          {
+            "id": "298d50319fb7221f",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              }
+            }
+          },
+          {
+            "id": "2044e08edf61e43c",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true
+              }
+            }
+          },
+          {
+            "id": "be912aced3e3157a",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {}
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "markdown-importer:Open format converter": false
+    }
+  },
+  "active": "0bef1db032f22389",
+  "lastOpenFiles": [
+    "assets/crates/Preview.jpg",
+    "Size Matters Game Jam.md",
+    "Untitled.canvas",
+    "README.md"
+  ]
+}

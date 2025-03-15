@@ -1,0 +1,13 @@
+.{
+    .name = .zigengine,
+    .fingerprint = 0x5b5b2f30bec12a33,
+    .version = "0.0.1",
+    .dependencies = .{
+        .dvui = .{ .path = "external/dvui" },
+        // .dvui = .{
+        //     .url = "https://github.com/david-vanderson/dvui/archive/52c7fd20ce6783f0c2402467d7bef81933455b53.tar.gz",
+        //     .hash = "12206354e8e79f32158e3f279285efeebd4e15b6c8d1eeef4e2278420f0d0d08d96d",
+        // },
+    },
+    .paths = .{""},
+}

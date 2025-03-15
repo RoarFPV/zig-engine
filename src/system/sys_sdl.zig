@@ -4,10 +4,15 @@ const fmt = std.fmt;
 
 const common = @import("sys_common.zig");
 const input = @import("sys_input.zig");
+const dvui = @import("dvui");
 
-const c = @cImport({
-    @cInclude("SDL2/SDL.h");
-});
+const SDLBackend = dvui.backend;
+comptime {
+    std.debug.assert(@hasDecl(SDLBackend, "SDLBackend"));
+}
+
+const c = SDLBackend.c;
+
 const assert = @import("std").debug.assert;
 
 pub const trace = @import("../tracy.zig").trace;
@@ -46,6 +51,12 @@ var renderTexture: ?*c.SDL_Texture = null;
 var window: ?*c.SDL_Window = null;
 var renderer: ?*c.SDL_Renderer = null;
 
+var uiWindow: dvui.Window = undefined;
+var uiSDLBackend: SDLBackend = undefined;
+
+var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
+const gpa = gpa_instance.allocator();
+
 var config = Config{
     .windowWidth = 800,
     .windowHeight = 600,
@@ -77,9 +88,9 @@ pub fn init(cfg: Config) !void {
     ) // c.SDL_WINDOW_FULLSCREEN_DESKTOP ) //c.SDL_WINDOW_RESIZABLE)
         orelse
         {
-        c.SDL_Log("Unable to create window: %s", c.SDL_GetError());
-        return error.SDLInitializationFailed;
-    };
+            c.SDL_Log("Unable to create window: %s", c.SDL_GetError());
+            return error.SDLInitializationFailed;
+        };
 
     renderer = c.SDL_CreateRenderer(
         window,
@@ -87,9 +98,9 @@ pub fn init(cfg: Config) !void {
         c.SDL_RENDERER_ACCELERATED,
     ) orelse
         {
-        c.SDL_Log("Unable to create renderer: %s", c.SDL_GetError());
-        return error.SDLInitializationFailed;
-    };
+            c.SDL_Log("Unable to create renderer: %s", c.SDL_GetError());
+            return error.SDLInitializationFailed;
+        };
 
     renderTexture = c.SDL_CreateTexture(
         renderer,
@@ -97,6 +108,19 @@ pub fn init(cfg: Config) !void {
         c.SDL_TEXTUREACCESS_STATIC,
         @as(c_int, @intCast(config.renderWidth)),
         @as(c_int, @intCast(config.renderHeight)),
+    );
+
+    uiSDLBackend = SDLBackend{
+        .window = @as(*SDLBackend.c.SDL_Window, @ptrCast(window)),
+        .renderer = @as(*SDLBackend.c.SDL_Renderer, @ptrCast(renderer)),
+    };
+
+    // init dvui Window (maps onto a single OS window)
+    uiWindow = try dvui.Window.init(
+        @src(),
+        gpa,
+        uiSDLBackend.backend(),
+        .{},
     );
 }
 
@@ -125,6 +149,7 @@ pub fn updateRenderTexture(data: *u8, len: usize) void {
 
 /// Release resources
 pub fn shutdown() void {
+    uiWindow.deinit();
     common.shutdown();
 
     c.SDL_DestroyRenderer(renderer);
@@ -142,8 +167,17 @@ pub fn beginUpdate() bool {
 
     t0 = @as(u32, @intCast(c.SDL_GetTicks()));
 
+    uiWindow.begin(std.time.nanoTimestamp()) catch unreachable;
+
     var event: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&event) != 0) {
+        if (event.type == c.SDL_QUIT) {
+            return false;
+        }
+
+        if (uiSDLBackend.addEvent(&uiWindow, event) catch continue)
+            continue;
+
         switch (event.type) {
             c.SDL_QUIT => {
                 return false;
@@ -175,10 +209,16 @@ pub fn beginUpdate() bool {
 }
 
 /// Copy render texture to device
-pub fn renderPresent() void {
+pub fn copyRenderTexture() void {
     _ = c.SDL_RenderClear(renderer);
     if (c.SDL_RenderCopy(renderer, renderTexture, 0, 0) != 0)
         c.SDL_Log("Unable to copy texture: %s", c.SDL_GetError());
+}
+
+/// Copy render texture to device
+pub fn renderPresent() void {
+    copyRenderTexture();
+    _ = uiWindow.end(.{}) catch unreachable;
 
     _ = c.SDL_RenderPresent(renderer);
 }

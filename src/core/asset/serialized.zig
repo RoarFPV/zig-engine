@@ -3,12 +3,28 @@
 //  Data
 //  ...
 const std = @import("std");
-const UUID = @import("uuid.zig").UUID;
-const serialized = @import("asset/serialized.zig");
-const Descriptor = serialized.Descriptor;
-const Header = serialized.Header;
-const Index = @import("asset/index.zig").Index;
-// ======== Tests ============
+const UUID = @import("../uuid.zig").UUID;
+
+pub const Header = extern struct {
+    marker: [8]u8 = [_]u8{ 'A', 'S', 'S', 'E', 'T', 0, 0, 0 },
+    version: u32,
+};
+
+pub const Descriptor = extern struct {
+    type: u32,
+    offset: u64,
+    size: u64,
+    uuid: u128,
+    hash: u128,
+};
+
+test "Write" {
+    const header = Header{
+        .version = 1,
+    };
+
+    try testing.expectEqual(1, header.version);
+}
 
 const ArrayList = std.ArrayList;
 const test_allocator = std.testing.allocator;
@@ -18,7 +34,7 @@ test "io writer usage" {
     var list = ArrayList(u8).init(test_allocator);
     defer list.deinit();
 
-    const header = serialized.Header{
+    const header = Header{
         .version = 1,
     };
 

@@ -29,22 +29,24 @@ var meshMaterial: engine.render.Material = undefined;
 var render3d: bool = true;
 var renderSingleFrame: bool = false;
 
-var nearZ: f32 = 0.1;
+var nearZ: f32 = 1.0;
 var farZ: f32 = 1000.0;
-var fovY: f32 = 90.0;
+var fovY: f32 = 80.0;
 var aspect: f32 = 0.0;
+
+const ui = engine.ui;
 
 pub fn init() !void {
     aspect = @as(f32, @floatFromInt(engine.systemConfig.renderWidth)) / @as(f32, @floatFromInt(engine.systemConfig.renderHeight));
     projMat = engine.Mat44f.createPerspective(fovY, aspect, nearZ, farZ);
     // projMat = engine.Mat44f.createPerspectiveSimple(fovY, aspect, nearZ, farZ);
 
-    // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/cube.obj");
+    mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/cube.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/triangle.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/bed.obj");
     //mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/crates/crate-04-1.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/suzanne.obj");
-    mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/E1M1.bsp.geometry.tri.obj");
+    // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/E1M1.bsp.geometry.tri.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/castle.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/landscape1.obj");
     // mesh = try tools.MeshObjLoader.importObjFile(&meshAllocator, "../../assets/sponza.obj");

@@ -71,6 +71,12 @@ pub fn build(b: *std.Build) void {
         exe.linkSystemLibrary("SDL2");
     }
 
+    const dvui_dep = b.dependency("dvui", .{ .target = target, .optimize = optimize, .backend = .sdl });
+
+    exe.root_module.addImport("dvui", dvui_dep.module("dvui_sdl"));
+    // exe.root_module.addImport("dvui", dvui_dep.module("dvui"));
+    // exe.root_module.addImport("SDLBackend", dvui_dep.module("SDLBackend"));
+
     //exe.linkLibC();
 
     exe.linkSystemLibrary("c");
